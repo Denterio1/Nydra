@@ -68,6 +68,7 @@ from sqlalchemy import (
     Float,
     Integer,
     JSON,
+    or_,
     String,
     Text,
     event,
@@ -1283,7 +1284,11 @@ async def login(
     if not auth_limiter.is_allowed(f"login:{ip}"):
         raise HTTPException(status_code=429, detail="Too many login attempts. Wait 5 minutes.")
 
-    result = await db.execute(select(DBUser).where(DBUser.username == body.username))
+    result = await db.execute(
+    select(DBUser).where(
+        or_(DBUser.username == body.username, DBUser.email == body.username)
+    )
+)
     user   = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
