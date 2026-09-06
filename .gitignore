@@ -37,3 +37,8 @@ mnist-dataset.zip
 
 # ── IDE (in case something slips through despite .idea/ above) ──
 .idea/
+# Virtual environment
+.venv/
+
+# VS Code
+.vscode/
