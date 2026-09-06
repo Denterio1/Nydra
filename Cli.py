@@ -1,5 +1,5 @@
 """
-cli.py — dataDoctor Full CLI
+cli.py — Nydra Full CLI
 ==============================
 Covers every operation the agent can perform:
 
@@ -16,6 +16,8 @@ Covers every operation the agent can perform:
   python cli.py relations  <file>
   python cli.py suggest    <file>
   python cli.py memory     [list|compare <file>|clear]
+  python cli.py dna        <file>
+  python cli.py image      <directory>
   python cli.py drift      <baseline> <current>
   python cli.py interactive
 """
@@ -52,7 +54,7 @@ from src.data.feature_engineer import engineer_features
 from src.data.loader        import load_csv
 from src.data.analyzer      import full_report, shape, missing_values, duplicate_rows, basic_stats, detect_outliers
 from src.data.cleaner       import handle_missing, remove_duplicates
-from src.core.agent         import DataDoctor
+from src.core.agent         import Nydra
 from src.report             import generate_html_report
 from src.data.ml_readiness  import ml_readiness
 from src.data.relationships import detect_relationships
@@ -60,6 +62,17 @@ from src.data.preparator    import prepare_for_ml
 from src.data.drift         import detect_drift
 from src.data.memory        import save_snapshot, get_history, compare_last_two, get_all_files, clear_history, clear_all
 from src.data.ai_suggestions import get_ai_suggestions
+
+# ── Image Version 6 Imports ──────────────────────────────────────────────────
+try:
+    from src.vision_nlp.image_loader  import ImageLoader
+    from src.vision_nlp.image_quality import analyze_dataset_quality
+    from src.vision_nlp.image_analyzer import ImageAnalyzer
+    from src.vision_nlp.image_report   import generate_report
+    from src.vision_nlp.audit_orchestrator import AuditOrchestrator
+    IMAGE_V6_AVAILABLE = True
+except ImportError:
+    IMAGE_V6_AVAILABLE = False
 
 # ── Terminal colours ──────────────────────────────────────────────────────────
 
@@ -83,7 +96,7 @@ SEPARATOR = c("─" * 60, DIM)
 def banner() -> None:
     print()
     print(c("╔══════════════════════════════════════════════════════════╗", CYAN))
-    print(c("║", CYAN) + c("        🩺  dataDoctor — Data Inspection Agent         ", BOLD + WHITE) + c("║", CYAN))
+    print(c("║", CYAN) + c("        🩺  Nydra — Data Inspection Agent         ", BOLD + WHITE) + c("║", CYAN))
     print(c("╚══════════════════════════════════════════════════════════╝", CYAN))
     print()
 
@@ -132,6 +145,9 @@ def usage() -> None:
         ("engineer  <file>",   "Auto Feature Engineering (Date/Text/Num)"),
         ("schema    <file>",   "Schema Validator (Infer/Validate/Export)"),
         ("dna       <file>",   "Cognitive Data DNA (Statistical identity)"),
+        ("image     <dir>",    "🖼️ Image Audit: load + quality + analyze + report"),
+        ("text      <val>",    "📖 Text Audit: sentiment + quality + keywords"),
+        ("audit-train <tr,ts>", "⚖️ ML Training Audit: Bias + Leakage + Labels"),
         ("drift     <base> <new>", "Detect data drift between two files"),
         ("suggest   <file>",   "AI-powered smart suggestions (needs .env)"),
         ("memory    [list|compare|clear]", "Track & compare inspection history"),
@@ -229,7 +245,7 @@ def cmd_inspect(args: list[str]) -> None:
     banner()
     print(c(f"  Inspecting: {path}", CYAN))
     print(SEPARATOR)
-    doctor = DataDoctor(remove_dupes=opts["dedup"], missing_strategy=opts["strategy"])
+    doctor = Nydra(remove_dupes=opts["dedup"], missing_strategy=opts["strategy"])
     result = doctor.inspect(path)
     print(result["summary"])
 
@@ -389,7 +405,7 @@ def cmd_export(args: list[str]) -> None:
     banner()
     print(c(f"  Export: {path}", CYAN))
     print(SEPARATOR)
-    doctor = DataDoctor(remove_dupes=opts["dedup"], missing_strategy=opts["strategy"])
+    doctor = Nydra(remove_dupes=opts["dedup"], missing_strategy=opts["strategy"])
     result = doctor.inspect(path)
     print(result["summary"])
     base, ext = os.path.splitext(path)
@@ -680,16 +696,16 @@ def cmd_suggest(args: list[str]) -> None:
     print(c(f"  AI Suggestions: {path}", CYAN))
     print(SEPARATOR)
 
-    api_key  = os.environ.get("DATADOCTOR_API_KEY", "")
-    base_url = os.environ.get("DATADOCTOR_BASE_URL", "https://api.groq.com/openai/v1")
-    model    = os.environ.get("DATADOCTOR_MODEL", "llama-3.3-70b-versatile")
+    api_key  = os.environ.get("NYDRA_API_KEY", "")
+    base_url = os.environ.get("NYDRA_BASE_URL", "https://api.groq.com/openai/v1")
+    model    = os.environ.get("NYDRA_MODEL", "llama-3.3-70b-versatile")
 
     if not api_key:
         print(c("\n  ✗ No API key found.", RED))
         print(c("  Add these to your .env file:\n", DIM))
-        print(c("  DATADOCTOR_API_KEY=your_key", YELLOW))
-        print(c("  DATADOCTOR_BASE_URL=https://api.groq.com/openai/v1", YELLOW))
-        print(c("  DATADOCTOR_MODEL=llama-3.3-70b-versatile", YELLOW))
+        print(c("  NYDRA_API_KEY=your_key", YELLOW))
+        print(c("  NYDRA_BASE_URL=https://api.groq.com/openai/v1", YELLOW))
+        print(c("  NYDRA_MODEL=llama-3.3-70b-versatile", YELLOW))
         print(c("\n  Supported providers: Groq (free), Gemini (free), OpenRouter, OpenAI", DIM))
         return
 
@@ -893,6 +909,185 @@ def cmd_engineer(args: list[str]) -> None:
     print(f"  Original : {len(data['df'].columns)} columns")
     print(f"  New      : {c(str(len(enriched['df'].columns)), GREEN)} columns")
     print()
+
+
+def cmd_text(args: list[str]) -> None:
+    if not args:
+        print(c("\n  Usage: python cli.py text \"Your text here...\"", RED))
+        print(c("         python cli.py text <filepath> [--col <column_name>]\n", DIM))
+        return
+
+    input_val = args[0]
+    col_name = None
+    if "--col" in args:
+        idx = args.index("--col")
+        if idx + 1 < len(args):
+            col_name = args[idx + 1]
+
+    banner()
+    print(c("  📖 Advanced Text Audit & Intelligence", CYAN))
+    print(SEPARATOR)
+
+    doctor = Nydra()
+
+    try:
+        # Check if input is a file
+        if os.path.isfile(input_val):
+            print(c(f"  📂 Loading file: {input_val}", DIM))
+            if input_val.endswith(".csv"):
+                df = pd.read_csv(input_val)
+                print(c(f"  📊 Analyzing column: {col_name or 'first detected text column'}", DIM))
+                res = doctor.audit_text(df, text_column=col_name)
+            else:
+                # Assume it's a raw text file
+                with open(input_val, 'r', encoding='utf-8', errors='ignore') as f:
+                    text = f.read()
+                res = doctor.audit_text(text)
+        else:
+            # Assume it's raw text
+            res = doctor.audit_text(input_val)
+
+        if res["status"] != "success":
+            print(c(f"  ✗ Analysis failed: {res.get('message')}", RED))
+            return
+
+        # Display results
+        if "intelligence" in res:
+            intel = res["intelligence"]
+            print(c("  ── Intelligence ─────────────────────────────────────", CYAN))
+            if "sentiment" in intel:
+                sent = intel["sentiment"]["doc_level"]
+                score = sent["score"]
+                sc = GREEN if score > 0.2 else RED if score < -0.2 else YELLOW
+                print(f"  {c('Sentiment', BOLD):<15} : {c(sent['label'].upper(), sc)} ({score:.2f})")
+
+            if "style" in intel:
+                style = intel["style"]
+                print(f"  {c('Complexity', BOLD):<15} : {c(style['readability_grade'], WHITE)}")
+                print(f"  {c('Tone', BOLD):<15} : {c(style['dominant_tone'].upper(), YELLOW)}")
+
+            if "keywords" in intel and intel["keywords"]:
+                kw = [k[0] for k in intel["keywords"][:5]]
+                print(f"  {c('Keywords', BOLD):<15} : {c(', '.join(kw), CYAN)}")
+            print()
+
+        if "quality" in res:
+            qual = res["quality"]
+            print(c("  ── Quality Audit ────────────────────────────────────", CYAN))
+            score = qual["overall_score"]
+            sc = GREEN if score > 80 else YELLOW if score > 60 else RED
+            print(f"  {c('Quality Score', BOLD):<15} : {c(f'{score:.1f}/100', sc)} [{c(qual['verdict'], sc)}]")
+
+            if qual.get("priority_issues"):
+                print(c("\n  Top Issues:", RED))
+                for issue in qual["priority_issues"][:3]:
+                    print(f"  {c('!', RED)} {issue['message']} ({issue['severity']})")
+            print()
+
+    except Exception as e:
+        print(c(f"  ✗ Error: {e}", RED))
+        import traceback
+        traceback.print_exc()
+
+
+def cmd_audit_train(args: list[str]) -> None:
+    if len(args) < 2:
+        print(c("\n  Usage: python cli.py audit-train <train_file> <test_file> [--target <col>] [--sensitive <col1,col2>]\n", RED))
+        return
+
+    train_path = args[0]
+    test_path = args[1]
+    target_col = "target"
+    sensitive_cols = None
+
+    if "--target" in args:
+        idx = args.index("--target")
+        if idx + 1 < len(args):
+            target_col = args[idx + 1]
+
+    if "--sensitive" in args:
+        idx = args.index("--sensitive")
+        if idx + 1 < len(args):
+            sensitive_cols = args[idx + 1].split(",")
+
+    banner()
+    print(c("  ⚖️  ML Training Data Audit (Bias, Leakage, Label Quality)", CYAN))
+    print(SEPARATOR)
+
+    try:
+        print(c(f"  📂 Loading Train: {train_path}", DIM))
+        print(c(f"  📂 Loading Test : {test_path}", DIM))
+        train_df = pd.read_csv(train_path)
+        test_df = pd.read_csv(test_path)
+
+        doctor = Nydra()
+        res = doctor.audit_training_data(train_df, test_df, target_col, sensitive_cols)
+
+        if res["status"] != "success":
+            print(c(f"  ✗ Audit failed: {res.get('message')}", RED))
+            return
+
+        # Summary
+        summary = res["summary"]
+        print(c("  ── Summary ──────────────────────────────────────────", CYAN))
+        lq_score = summary.get("label_quality_score", 0)
+        print(f"  {c('Label Quality', BOLD):<18} : {c(f'{lq_score:.1f}/100', GREEN)}")
+        lk_score = summary.get("leakage_score", 0)
+        lk_risk = summary.get('leakage_risk', 'N/A')
+        print(f"  {c('Leakage Score', BOLD):<18} : {c(f'{lk_score:.1f}/100', YELLOW)} [{lk_risk}]")
+        if "bias_score" in summary:
+            bs_score = summary.get("bias_score", 0)
+            bs_verdict = summary.get('bias_verdict', 'N/A')
+            print(f"  {c('Bias Score', BOLD):<18} : {c(f'{bs_score:.1f}/100', RED)} [{bs_verdict}]")
+        print()
+
+        # Detailed Label Quality
+        if "label_quality" in res:
+            lq = res["label_quality"]
+            print(c("  ── Label Quality Issues ─────────────────────────────", CYAN))
+            if lq.priority_recommendations:
+                for rec in lq.priority_recommendations[:3]:
+                    print(f"  {c('!', RED)} [{rec['area']}] {rec['issue']}")
+            else:
+                print(c("  ✓ No critical label quality issues detected.", GREEN))
+            print()
+
+        # Detailed Leakage
+        if "leakage" in res and isinstance(res["leakage"], dict):
+            lk = res["leakage"]
+            print(c("  ── Data Leakage Findings ────────────────────────────", CYAN))
+            findings = lk.get("all_findings", [])
+            leakers = [f["feature"] for f in findings if f.get("feature")]
+            if leakers:
+                print(f"  {c('⚠', RED)} Found leaking features: {', '.join(list(set(leakers))[:5])}")
+            
+            # Check overlap from detector results
+            overlap_res = lk.get("detector_results", {}).get("TrainTestOverlapDetector", {})
+            overlap_rate = overlap_res.get("overlap_rate", 0)
+            if overlap_rate > 0:
+                print(f"  {c('⚠', RED)} Train/Test overlap: {overlap_rate:.2%}")
+            
+            if not leakers and overlap_rate == 0:
+                print(c("  ✓ No significant leakage detected.", GREEN))
+            print()
+
+        # Detailed Bias
+        if "bias" in res and isinstance(res["bias"], dict):
+            bs = res["bias"]
+            print(c("  ── Bias & Fairness Findings ─────────────────────────", CYAN))
+            findings = bs.get("findings", [])
+            if findings:
+                biased = [f["attribute"] for f in findings if f.get("attribute")]
+                print(f"  {c('⚠', RED)} Potential bias in: {', '.join(list(set(biased)))}")
+            else:
+                print(c("  ✓ No significant bias detected.", GREEN))
+            print()
+
+    except Exception as e:
+        print(c(f"  ✗ Error: {e}", RED))
+        import traceback
+        traceback.print_exc()
+
 
 def cmd_target(args: list[str]) -> None:
     path = require_file(args)
@@ -1321,7 +1516,7 @@ def cmd_connect(args: list[str]) -> None:
         print()
         print(c("  ── Commands ─────────────────────────────────────────", CYAN))
         print(c("  tables           ← show all tables", DIM))
-        print(c("  analyse <table>  ← full dataDoctor analysis", DIM))
+        print(c("  analyse <table>  ← full Nydra analysis", DIM))
         print(c("  schema <table>   ← show table structure", DIM))
         print(c("  export <table>   ← export table to CSV", DIM))
         print(c("  clean <table>    ← analyse + clean data", DIM))
@@ -1421,7 +1616,12 @@ def cmd_connect(args: list[str]) -> None:
                     print(f"  ML Score  : {c(str(ml['score']), GREEN)}/100")
                     print(f"  Missing   : {c(str(sum(analysis['missing_values'].values())), YELLOW)}")
                     print(f"  Duplicates: {c(str(analysis['duplicate_rows']), YELLOW)}")
-                    print(f"  Outlier cols: {c(str(len(outliers)), YELLOW)}")
+                    # Handle OutlierReport object or dict
+                    if hasattr(outliers, "method_results"):
+                        outlier_cnt = len(set(r.column for r in outliers.method_results if r.column and r.outlier_count > 0))
+                    else:
+                        outlier_cnt = len(outliers)
+                    print(f"  Outlier cols: {c(str(outlier_cnt), YELLOW)}")
                     print(c(f"  ✓ Cleaned file saved: {out_path}", GREEN))
                     print()
                 except Exception as e:
@@ -1495,6 +1695,104 @@ def cmd_dna(args: list[str]) -> None:
 
     print()
 
+def cmd_image(args: list[str]) -> None:
+    if not IMAGE_V6_AVAILABLE:
+        print(c("  ✗ Error: Image modules (vision_nlp) not found or missing dependencies.", RED))
+        return
+
+    if not args:
+        print(c("  ✗ Error: no directory path provided.", RED))
+        sys.exit(1)
+    
+    path = args[0]
+    do_clean = "--clean" in args
+    
+    if not os.path.exists(path):
+        print(c(f"  ✗ Path not found: {path}", RED))
+        sys.exit(1)
+
+    banner()
+    print(c(f"  🖼️  Professional Image Audit: {path}", CYAN))
+    if do_clean:
+        print(c("  🧹 Auto-Repair mode enabled", YELLOW))
+    print(SEPARATOR)
+
+    try:
+        orchestrator = AuditOrchestrator(target_dir=path, verbose=False)
+        
+        print(c("  1/4 Running Full Pipeline (Load, Quality, Analyze)...", DIM))
+        res = orchestrator.run_full_audit(clean=do_clean)
+        
+        if res["status"] != "success":
+            print(c(f"  ✗ Audit failed: {res.get('message')}", RED))
+            return
+
+        print(f"  ✓ Found {c(str(len(res['loader_df'])), GREEN)} valid images")
+        mean_score = res["quality_report"].mean_overall_score
+        print(f"  ✓ Mean Quality Score: {c(f'{mean_score:.1f}/100', GREEN)}")
+        print()
+
+        # Deep Insights from ImageAnalyzer
+        if "analyzer_report" in res:
+            report = res["analyzer_report"]
+            print(c("  ── Deep Insights ────────────────────────────────────", CYAN))
+
+            # 1. Class Balance
+            if report.class_balance:
+                cb = report.class_balance
+                imb = "Balanced" if cb.imbalance_ratio < 1.5 else "Moderate Imbalance" if cb.imbalance_ratio < 3 else "Severe Imbalance"
+                color = GREEN if imb == "Balanced" else YELLOW if "Moderate" in imb else RED
+                print(f"  {c('Class Balance', BOLD):<18} : {c(imb, color)} (Ratio: {cb.imbalance_ratio:.2f})")
+
+            # 2. Diversity
+            if report.diversity_redundancy:
+                div = report.diversity_redundancy
+                print(f"  {c('Diversity Index', BOLD):<18} : {c(f'{div.vendi_score:.2f}', WHITE)} (Vendi Score)")
+                if div.near_duplicate_clusters:
+                    print(f"  {c('Redundancy', BOLD):<18} : {c(f'⚠️ Found {len(div.near_duplicate_clusters)} groups of duplicates', YELLOW)}")
+
+            # 3. Outliers
+            if report.outlier_detection:
+                out = report.outlier_detection
+                if out.outlier_images:
+                    print(f"  {c('Outliers', BOLD):<18} : {c(f'Found {len(out.outlier_images)} abnormal images ({out.outlier_rate:.1%})', RED)}")
+                else:
+                    print(f"  {c('Outliers', BOLD):<18} : {c('None detected', GREEN)}")
+
+            # 4. ML Readiness
+            if report.ml_readiness:
+                ml = report.ml_readiness
+                sc = GREEN if ml.final_score > 80 else YELLOW if ml.final_score > 60 else RED
+                print(f"  {c('ML Readiness', BOLD):<18} : {c(f'{ml.final_score:.1f}/100', sc)} [{c(ml.grade, sc)} - {ml.verdict}]")
+                if ml.priority_issues:
+                    print(c("\n  Priority Fixes:", RED))
+                    for issue in ml.priority_issues[:3]:
+                        print(f"  {c('!', RED)} {issue}")
+            print()
+
+        if do_clean and "cleaner_df" in res:
+            cdf = res["cleaner_df"]
+            if not cdf.empty and "cleaned" in cdf.columns:
+                n_cleaned = len(cdf[cdf["cleaned"] == True])
+                print(f"  ✓ Auto-Repair: {c(str(n_cleaned), GREEN)} images fixed")
+            else:
+                print(f"  ✓ Auto-Repair: {c('0', GREEN)} images fixed (no repairs needed or possible)")
+            print()
+
+        print(c("  3/4 Generating professional reports...", DIM))
+        report_paths = orchestrator.generate_reports(output_dir="reports")
+
+        print()
+        print(c("  ── Reports Generated ────────────────────────────────", CYAN))
+        for fmt, p in report_paths.items():
+            print(f"  ✓ {fmt.upper():<5} : {c(str(p), GREEN)}")
+        print()
+
+    except Exception as e:
+        print(c(f"  ✗ Unexpected Error: {e}", RED))
+        import traceback
+        traceback.print_exc()
+
 def cmd_quality(args):
     import pandas as pd
     from src.data.quality_score import DataQualityScorer
@@ -1549,13 +1847,14 @@ def cmd_interactive() -> None:
             "23": ("Class imbalance detector",   "imbalance"),
             "24": ("Pipeline export (sklearn)",  "pipeline"),
             "25": ("Cognitive Data DNA",         "dna"),
-            "26": ("Database connector",         "connect"),
+            "26": ("🖼️ Image Audit",           "image"),
+            "27": ("Database connector",         "connect"),
 
         }
         for key, (label, _) in options.items():
             print(f"  {c(key, YELLOW)}. {label}")
 
-        choice = input(c("\n  Your choice (1-26): ", YELLOW)).strip()
+        choice = input(c("\n  Your choice (1-27): ", YELLOW)).strip()
         action = options.get(choice, ("", "inspect"))[1]
 
         strategy = "mean"
@@ -1646,6 +1945,8 @@ def cmd_interactive() -> None:
             cmd_pipeline(file_args)
         elif action == "dna":
             cmd_dna(file_args)
+        elif action == "image":
+            cmd_image(file_args)
         elif action == "connect":
             cmd_connect([])    
 
@@ -1681,6 +1982,9 @@ COMMANDS = {
     "imbalance":  cmd_imbalance,
     "pipeline":   cmd_pipeline,
     "dna":        cmd_dna,
+    "image":      cmd_image,
+    "text":       cmd_text,
+    "audit-train": cmd_audit_train,
     "connect": cmd_connect,
     "quality" : cmd_quality,
     "report" : cmd_report,  

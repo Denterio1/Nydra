@@ -4,7 +4,7 @@ memory.py — Data Memory: persistent storage of inspection history.
 Uses SQLite to store inspection snapshots per file.
 Enables comparison between runs and trend tracking.
 
-Database: datadoctor_memory.db (created in project root)
+Database: nydra_memory.db (created in project root)
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any
 
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "datadoctor_memory.db")
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "nydra_memory.db")
 
 
 # ── Database setup ────────────────────────────────────────────────────────────

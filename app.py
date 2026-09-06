@@ -52,6 +52,17 @@ from src.data.drift        import detect_drift
 from src.core.agent        import DataDoctor
 from src.core.human_analyst import run_human_analyst
 
+# ── Image Version 6 Imports ──────────────────────────────────────────────────
+try:
+    from src.vision_nlp.image_loader       import ImageLoader
+    from src.vision_nlp.image_quality      import analyze_dataset_quality, ImageQualityAnalyzer
+    from src.vision_nlp.image_analyzer     import ImageAnalyzer
+    from src.vision_nlp.image_report       import generate_report
+    from src.vision_nlp.audit_orchestrator import AuditOrchestrator, run_image_audit
+    IMAGE_V6_AVAILABLE = True
+except ImportError:
+    IMAGE_V6_AVAILABLE = False
+
 # ── Cache functions ───────────────────────────────────────────────
 @st.cache_data
 def _get_quality(df):
@@ -580,7 +591,7 @@ if has_data:
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tabs = st.tabs(["📊 Overview", "🔍 Quality", "🛡️ Privacy", "📈 Statistics", "🤖 ML Readiness", "🔗 Relationships", "🧹 Cleaning", "📉 Drift", "🧬 Cognitive DNA", "📂 Multi-File", "🔬 Lab", "🚀 ML Pipeline", "📋 Audit", "💬 Data Chat", "🗄️ Database", "🧠 Analyst", "📄 Report"])
+tabs = st.tabs(["📊 Overview", "🔍 Quality", "🛡️ Privacy", "📈 Statistics", "🤖 ML Readiness", "🔗 Relationships", "🧹 Cleaning", "📉 Drift", "🧬 Cognitive DNA", "🖼️ Image Audit", "📂 Multi-File", "🔬 Lab", "🚀 ML Pipeline", "📋 Audit", "💬 Data Chat", "🗄️ Database", "🧠 Analyst", "📄 Report"])
 
 # ── Tab 0: Overview ───────────────────────────────────────────────────────────
 with tabs[0]:
@@ -1027,8 +1038,117 @@ with tabs[8]:
         except Exception as e:
             st.error(f"DNA Analysis Error: {e}")
 
-# ── Tab 9: Multi-File Analysis ────────────────────────────────────────────────
+# ── Tab 9: Image Audit ────────────────────────────────────────────────────────
 with tabs[9]:
+    st.markdown("### 🖼️ Image Audit")
+    st.caption("Professional end-to-end image dataset inspection: Quality, Diversity, Bias, and Automated Repair.")
+    st.markdown("---")
+
+    if not IMAGE_V6_AVAILABLE:
+        st.error("Image modules (vision_nlp) not found or missing dependencies.")
+    else:
+        img_source = st.radio("Source:", ["Local Directory", "Individual Uploads"], horizontal=True)
+        
+        if img_source == "Local Directory":
+            col_path, col_clean = st.columns([3, 1])
+            with col_path:
+                target_dir = st.text_input("Directory path:", placeholder="e.g. data/images")
+            with col_clean:
+                do_clean = st.checkbox("Auto-Repair 🧹", help="Fix brightness, contrast, blur, etc. during audit.")
+
+            if st.button("▶ Run Professional Audit", key="run_image_audit_dir", type="primary", use_container_width=True):
+                if os.path.exists(target_dir):
+                    with st.spinner("Executing Image Audit Pipeline..."):
+                        orchestrator = AuditOrchestrator(target_dir=target_dir, verbose=False)
+                        res = orchestrator.run_full_audit(clean=do_clean)
+                        
+                        if res["status"] == "success":
+                            st.session_state["image_audit_results"] = res
+                            st.success(f"✓ Audit complete for {len(res['df_loader'])} images!")
+                        elif res["status"] == "empty":
+                            st.warning(res["message"])
+                        else:
+                            st.error(f"Audit failed: {res.get('message')}")
+                else:
+                    st.error("Directory not found.")
+        else:
+            uploaded_imgs = st.file_uploader("Upload images", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
+            if uploaded_imgs and st.button("▶ Run Audit on Uploads", key="run_image_audit_upload", type="primary", use_container_width=True):
+                st.info("Upload-based audit is coming soon. Please use 'Local Directory' for now.")
+
+        if "image_audit_results" in st.session_state:
+            res = st.session_state["image_audit_results"]
+            
+            # Metrics
+            st.markdown("#### 📈 Dataset Overview")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Images Found", len(res["df_loader"]))
+            
+            q_score = res['quality_report'].mean_overall_score
+            q_color = "normal" if q_score > 60 else "inverse"
+            c2.metric("Mean Quality", f"{q_score:.1f}/100")
+            
+            n_classes = res["df_loader"]["class_name"].nunique() if "class_name" in res["df_loader"].columns else "N/A"
+            c3.metric("Classes", n_classes)
+            
+            if res.get("cleaner_df") is not None:
+                n_cleaned = len(res["cleaner_df"][res["cleaner_df"]["cleaned"] == True])
+                c4.metric("Cleaned 🧹", n_cleaned)
+            else:
+                c4.metric("Cleaning", "Disabled")
+
+            # Quality Distribution
+            st.markdown("#### 📊 Quality Distribution")
+            fig = px.histogram(res["df_quality"], x="overall_score", nbins=20, 
+                               title="Overall Quality Score Distribution", 
+                               color_discrete_sequence=["#5ce0c6"],
+                               labels={"overall_score": "Quality Score (0-100)"})
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="#e8e6e1")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Advanced Details
+            with st.expander("🔍 View Detailed Audit Results"):
+                det_tab1, det_tab2, det_tab3 = st.tabs(["Quality Details", "Dataset Analysis", "Cleaning Log"])
+                
+                with det_tab1:
+                    st.dataframe(res["df_quality"].head(100), use_container_width=True)
+                
+                with det_tab2:
+                    st.json(res["analyzer_df"].to_dict(orient="records")[0] if not res["analyzer_df"].empty else {})
+                
+                with det_tab3:
+                    if res.get("cleaner_df") is not None:
+                        st.dataframe(res["cleaner_df"][res["cleaner_df"]["cleaned"] == True], use_container_width=True)
+                    else:
+                        st.info("Cleaning was not requested for this audit.")
+
+            # Reports
+            st.markdown("#### 🚀 Professional Reports")
+            col_rep, col_dl = st.columns([1, 2])
+            
+            with col_rep:
+                if st.button("Generate Reports", key="gen_img_reports"):
+                    with st.spinner("Generating PDF, HTML and JSON reports..."):
+                        orchestrator = AuditOrchestrator(target_dir=target_dir, verbose=False)
+                        orchestrator.results = res # Inject results
+                        report_paths = orchestrator.generate_reports(output_dir="reports")
+                        st.session_state["image_report_paths"] = report_paths
+            
+            with col_dl:
+                if "image_report_paths" in st.session_state:
+                    paths = st.session_state["image_report_paths"]
+                    dl_cols = st.columns(len(paths))
+                    for i, (fmt, p) in enumerate(paths.items()):
+                        with open(p, "rb") as f:
+                            dl_cols[i].download_button(
+                                label=f"⬇️ {fmt.upper()}", 
+                                data=f, 
+                                file_name=os.path.basename(p), 
+                                key=f"dl_img_v6_{fmt}"
+                            )
+
+# ── Tab 10: Multi-File Analysis ────────────────────────────────────────────────
+with tabs[10]:
     st.markdown("### 📂 Multi-File Analysis")
     st.caption("Upload multiple files and compare them side by side.")
     st.markdown("---")
@@ -1229,6 +1349,38 @@ with tabs[9]:
                     )
                 except Exception as e:
                     st.error(f"Merge failed: {e}")
+
+            st.markdown("---")
+
+            # ── Convert to SQLite ─────────────────────────────────────────────
+            st.markdown("#### 🗄️ Convert All to SQLite")
+            st.caption("Convert all uploaded files into a single optimized SQLite database.")
+
+            if st.button("💾 Convert & Generate DB", use_container_width=True, key="multi_db_convert_btn"):
+                with st.spinner("Building SQLite Database..."):
+                    try:
+                        # Prepare files for converter: list of (bytes, filename)
+                        to_convert = []
+                        for f in multi_files:
+                            f.seek(0)
+                            to_convert.append((f.read(), f.name))
+                        
+                        db_bytes, report = convert_to_bytes(to_convert)
+                        
+                        st.success(f"✓ Database generated! {report.total_tables} tables, {report.total_rows:,} rows.")
+                        
+                        # Show report summary
+                        st.dataframe(report.as_df(), use_container_width=True)
+                        
+                        st.download_button(
+                            label="⬇️ Download SQLite Database (.db)",
+                            data=db_bytes,
+                            file_name="dataDoctor_converted.db",
+                            mime="application/x-sqlite3",
+                            key="multi_db_download",
+                        )
+                    except Exception as e:
+                        st.error(f"Conversion failed: {e}")
 
             st.markdown("---")
 
@@ -1743,7 +1895,7 @@ with tabs[14]:
     render_database_connector()
 
 # ── Tab 15: Analyst ───────────────────────────────────────────────────────────
-with tabs[15]:
+with tabs[16]:
     if not has_data:
         st.info("Please load data to run Analyst mode.")
     elif not analyst_report:
@@ -1791,7 +1943,7 @@ with tabs[15]:
             icon = "🔴" if sev == "high" else "🟡" if sev == "medium" else "🟢"
             st.markdown(f"{idx}. {icon} **{item['action']}**  \n{item['why']}")
 
-with tabs[16]:  # 📄 Smart Report
+with tabs[17]:  # 📄 Smart Report
     if not has_data:
         st.info("Please load data to generate a report.")
     else:

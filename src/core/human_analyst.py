@@ -1,5 +1,5 @@
 """
-human_analyst.py - Safety-first analyst simulation for dataDoctor.
+human_analyst.py - Safety-first analyst simulation for nydra.
 
 This module provides a deterministic "human analyst" style layer that:
 - reasons in explicit steps,
@@ -103,7 +103,13 @@ def run_human_analyst(
     cols = int(analysis["shape"]["columns"])
     missing_total = int(sum(analysis["missing_values"].values()))
     dupes = int(analysis["duplicate_rows"])
-    outlier_cols = len(outliers)
+    
+    # Handle OutlierReport object or dict
+    if hasattr(outliers, "method_results"):
+        outlier_cols = len(set(r.column for r in outliers.method_results if r.column and r.outlier_count > 0))
+    else:
+        outlier_cols = len(outliers)
+        
     rel_count = len(rels or [])
     ml_score = int(ml["score"]) if ml else None
 
@@ -208,3 +214,4 @@ def run_human_analyst(
         ],
         "action_plan": actions[:10],
     }
+

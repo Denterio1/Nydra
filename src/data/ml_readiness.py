@@ -70,7 +70,12 @@ def ml_readiness(data: dict[str, Any], outliers: dict) -> dict[str, Any]:
     total += pts
 
     # ── 3. Outliers ───────────────────────────────────────────────────────────
-    n_outlier_cols = len(outliers)
+    # Handle both new OutlierReport object and old dictionary format
+    if hasattr(outliers, "method_results"):
+        n_outlier_cols = len(set(r.column for r in outliers.method_results if r.column and r.outlier_count > 0))
+    else:
+        n_outlier_cols = len(outliers)
+        
     n_numeric      = sum(1 for c in df.columns if pd.api.types.is_numeric_dtype(df[c]))
 
     if n_outlier_cols == 0:

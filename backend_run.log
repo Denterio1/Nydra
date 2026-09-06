@@ -1,0 +1,5 @@
+INFO:     127.0.0.1:59537 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33844 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33844 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:34728 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34807 - "GET /api/v1/auth/google/login HTTP/1.1" 307 Temporary Redirect

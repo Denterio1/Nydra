@@ -1,5 +1,5 @@
 """
-dataDoctor — src/data/advanced_outlier.py
+Nydra — src/data/advanced_outlier.py
 ==========================================
 Advanced Outlier Detection Engine
 Covers: Statistical + ML + Ensemble + SmartDetector + OutlierReport
@@ -21,7 +21,7 @@ from scipy import stats
 from scipy.spatial.distance import mahalanobis
 
 warnings.filterwarnings("ignore")
-logger = logging.getLogger("dataDoctor.outlier")
+logger = logging.getLogger("nydra.outlier")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1003,7 +1003,7 @@ class SmartDetector:
 
 class OutlierAnalyzer:
     """
-    Main entry point for dataDoctor outlier analysis.
+    Main entry point for Nydra outlier analysis.
     Runs every available method, builds an ensemble, runs SmartDetector,
     and produces a complete OutlierReport.
 
@@ -1121,7 +1121,43 @@ class OutlierAnalyzer:
         num_cols = list(_get_numeric(df).columns)
 
         if not num_cols:
-            raise ValueError("No numeric columns found in DataFrame.")
+            # Return a minimal empty report instead of crashing
+            empty_series = pd.Series([False]*len(df), index=df.index)
+            empty_scores = pd.Series([0.0]*len(df), index=df.index)
+            empty_df = pd.DataFrame(index=df.index)
+
+            return OutlierReport(
+                dataset_shape=(len(df), df.shape[1]),
+                numeric_columns=[],
+                method_results=[],
+                ensemble=EnsembleResult(
+                    votes_df=empty_df,
+                    score_df=empty_df,
+                    consensus_mask=empty_series,
+                    consensus_score=empty_scores,
+                    method_results=[],
+                    summary={"consensus_outliers": 0, "consensus_rate": 0.0}
+                ),
+                smart_choice="none",
+                smart_result=OutlierResult(
+                    method="none", 
+                    column=None,
+                    outlier_mask=empty_series,
+                    outlier_count=0,
+                    outlier_rate=0.0,
+                    scores=empty_scores,
+                    thresholds={},
+                    warnings=["No numeric columns found for analysis."]
+                ),
+                recommendations=["No numeric columns found. Outlier analysis skipped."],
+                stats_summary={
+                    "dataset_rows": len(df),
+                    "dataset_cols": df.shape[1],
+                    "numeric_cols": 0,
+                    "consensus_outliers": 0,
+                    "consensus_rate": 0.0,
+                },
+            )
 
         # 1. Ensemble (runs everything internally)
         methods = EnsembleOutlierDetector.ALL_METHODS.copy()
@@ -1227,7 +1263,7 @@ class OutlierAnalyzer:
         """Print a text summary of the OutlierReport to stdout."""
         sep = "═" * 60
         print(f"\n{sep}")
-        print("  dataDoctor — Advanced Outlier Report")
+        print("  Nydra — Advanced Outlier Report")
         print(sep)
         print(f"  Dataset     : {report.dataset_shape[0]} rows × {report.dataset_shape[1]} cols")
         print(f"  Numeric cols: {len(report.numeric_columns)}")
@@ -1263,7 +1299,7 @@ def detect_outliers(
     verbose           : bool  = False,
 ) -> OutlierReport:
     """
-    One-liner outlier detection for dataDoctor. Supports 'method' as alias for 'strategy'.
+    One-liner outlier detection for nydra. Supports 'method' as alias for 'strategy'.
     """
     use_strategy = method if method else strategy
     analyzer = OutlierAnalyzer(

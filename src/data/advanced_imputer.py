@@ -1,6 +1,6 @@
 """
 advanced_imputer.py — State-of-the-Art Missing Data Imputation
-dataDoctor v0.5.0
+Nydra v0.5.0
 
 Methods:
   SimpleImputer       — mean, median, mode, constant, ffill, bfill, interpolate, random
@@ -26,11 +26,16 @@ import pandas as pd
 from scipy import stats
 
 warnings.filterwarnings("ignore")
-logger = logging.getLogger("dataDoctor.imputer")
+logger = logging.getLogger("nydra.imputer")
 
 try:
-    from sklearn.impute import KNNImputer as _SKLKNN, IterativeImputer as _SKLIter
+    from sklearn.impute import KNNImputer as _SKLKNN
     from sklearn.preprocessing import LabelEncoder
+    try:
+        from sklearn.experimental import enable_iterative_imputer  # noqa
+        from sklearn.impute import IterativeImputer as _SKLIter
+    except (ImportError, AttributeError):
+        _SKLIter = None
     SKLEARN_OK = True
 except ImportError:
     SKLEARN_OK = False
@@ -51,7 +56,7 @@ try:
     import torch.optim as optim
     from torch.utils.data import DataLoader, TensorDataset
     TORCH_OK = True
-except ImportError:
+except Exception:
     TORCH_OK = False
 
 try:
@@ -250,18 +255,29 @@ class BaseImputer(ABC):
         return total, changes
 
     def _encode(self, df):
-        enc, df2 = {}, df.copy()
+        enc = {}
         if not SKLEARN_OK:
-            return df2, enc
-        for col in df.select_dtypes(include="object").columns:
-            le = LabelEncoder()
-            nn = df2[col].dropna().astype(str)
-            if len(nn) > 0:
-                le.fit(nn)
-                m = df2[col].notna()
-                df2.loc[m, col] = le.transform(df2.loc[m, col].astype(str))
-                df2[col] = pd.to_numeric(df2[col], errors="coerce")
-                enc[col] = le
+            return df.copy(), enc
+            
+        new_data = {}
+        for col in df.columns:
+            if not pd.api.types.is_numeric_dtype(df[col]):
+                le = LabelEncoder()
+                mask = df[col].notna()
+                nn = df.loc[mask, col].astype(str)
+                if len(nn) > 0:
+                    le.fit(nn)
+                    encoded_vals = np.full(len(df), np.nan, dtype=float)
+                    encoded_vals[mask] = le.transform(nn).astype(float)
+                    new_data[col] = pd.Series(encoded_vals, index=df.index)
+                    enc[col] = le
+                else:
+                    # All NaNs, but still need to be numeric for median/neural
+                    new_data[col] = pd.Series(np.full(len(df), np.nan, dtype=float), index=df.index)
+            else:
+                new_data[col] = df[col].copy()
+                
+        df2 = pd.DataFrame(new_data)
         return df2, enc
 
     def _decode(self, df, enc, orig):
@@ -1077,13 +1093,15 @@ class NeuralTabularImputer(BaseImputer):
             w.append("PyTorch not installed. Falling back to MICE.")
             return IterativeImputer().fit_transform(df)
 
-        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if not num_cols:
-            w.append("No numeric columns found for NeuralImputer.")
+        # Use encoding to handle categorical data
+        df_enc, enc = self._encode(df)
+        
+        if df_enc.empty:
+            w.append("Empty dataframe provided to NeuralImputer.")
             return ImputationResult("Neural(failed)", df.copy(), 0, {}, 0.0, w, False)
 
         # 1. Scaling & Preparation
-        X_orig = df[num_cols].copy()
+        X_orig = df_enc.copy()
         mask = X_orig.isnull().values
         X_filled = X_orig.fillna(X_orig.median()).values.astype(np.float32)
         
@@ -1130,7 +1148,7 @@ class NeuralTabularImputer(BaseImputer):
                 optimizer.step()
                 epoch_loss += loss.item()
             
-            avg_loss = epoch_loss / len(loader)
+            avg_loss = epoch_loss / max(len(loader), 1)
             if self.early_stopping:
                 if avg_loss < best_loss - 1e-5:
                     best_loss = avg_loss
@@ -1154,14 +1172,17 @@ class NeuralTabularImputer(BaseImputer):
         # Re-scale
         X_final = X_recon * iqr + q1
         
-        df_imp = df.copy()
-        for i, col in enumerate(num_cols):
+        df_imp = df_enc.copy()
+        for i, col in enumerate(df_enc.columns):
             df_imp.loc[mask[:, i], col] = X_final[mask[:, i], i]
 
-        n, ch = self._track(df, df_imp)
+        # Decode categorical columns back to original format
+        df_final = self._decode(df_imp, enc, df)
+
+        n, ch = self._track(df, df_final)
         return ImputationResult(
             f"Neural({self.architecture.upper()}, epochs={self.epochs})",
-            df_imp, n, ch, round((time.time() - t0) * 1000, 2), w, True
+            df_final, n, ch, round((time.time() - t0) * 1000, 2), w, True
         )
 
 
@@ -1650,11 +1671,14 @@ class DenoisingDiffusionImputer(BaseImputer):
         w: list = []
         if not TORCH_OK: return SimpleImputer().fit_transform(df)
 
-        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if not num_cols: return ImputationResult("Diff(fail)", df.copy(), 0, {}, 0.0, ["No numeric cols"], False)
+        # Use encoding to handle categorical data
+        df_enc, enc = self._encode(df)
+        
+        if df_enc.empty:
+            return ImputationResult("Diff(fail)", df.copy(), 0, {}, 0.0, ["Empty dataframe"], False)
 
         # 1. Scaling
-        X_orig = df[num_cols].copy()
+        X_orig = df_enc.copy()
         mask = X_orig.isnull().values
         X_filled = X_orig.fillna(X_orig.median()).values.astype(np.float32)
         mean, std = X_filled.mean(axis=0), X_filled.std(axis=0) + 1e-8
@@ -1672,7 +1696,7 @@ class DenoisingDiffusionImputer(BaseImputer):
 
         # 3. Training
         dataset = TensorDataset(torch.from_numpy(X_scaled))
-        loader = DataLoader(dataset, batch_size=64, shuffle=True)
+        loader = DataLoader(dataset, batch_size=min(64, len(df_enc)), shuffle=True)
         
         model.train()
         for _ in range(self.epochs):
@@ -1711,12 +1735,15 @@ class DenoisingDiffusionImputer(BaseImputer):
 
         # 5. Finalize
         X_final = X_recon * std + mean
-        df_imp = df.copy()
-        for i, col in enumerate(num_cols):
+        df_imp = df_enc.copy()
+        for i, col in enumerate(df_enc.columns):
             df_imp.loc[mask[:, i], col] = X_final[mask[:, i], i]
 
-        n, ch = self._track(df, df_imp)
-        return ImputationResult("DenoisingDiffusionImputer", df_imp, n, ch, 
+        # Decode categorical columns back
+        df_final = self._decode(df_imp, enc, df)
+
+        n, ch = self._track(df, df_final)
+        return ImputationResult("DenoisingDiffusionImputer", df_final, n, ch, 
                                 round((time.time() - t0) * 1000, 2), w, True)
 
 
@@ -1860,7 +1887,7 @@ def compare_imputers(df, imputers=None, missing_rate=0.10):
 
 
 def impute_data_dict(data, strategy="auto", **kwargs):
-    """Drop-in replacement for cleaner.handle_missing() — works with dataDoctor data dict."""
+    """Drop-in replacement for cleaner.handle_missing() — works with Nydra data dict."""
     df = data.get("df") if data.get("df") is not None else pd.DataFrame(data.get("rows", []))
     imp_map = {
         "auto":       SmartImputer(**kwargs),

@@ -1,0 +1,20 @@
+INFO:     Started server process [30024]
+INFO:     Waiting for application startup.
+2026-08-14 21:40:10 | INFO     | nydra.api | \U0001fa7a Nydra API starting up (v1.0.0)...
+2026-08-14 21:40:10 | INFO     | nydra.api | Migrated schema: added column users.google_id
+2026-08-14 21:40:10 | INFO     | nydra.api | Migrated schema: added column users.profile_image
+2026-08-14 21:40:10 | INFO     | nydra.api | Job queue started with 4 workers
+2026-08-14 21:40:10 | INFO     | nydra.api | \u2705 Database ready | \u2705 Job queue running (4 workers)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+2026-08-15 01:20:47 | INFO     | nydra.api | GET / \u2192 200 (153.6ms) [e98bcce0-fdd]
+2026-08-15 01:20:47 | INFO     | nydra.api | GET /favicon.ico \u2192 404 (12.0ms) [bc2feeaa-764]
+2026-08-15 01:29:18 | INFO     | nydra.api | GET / \u2192 200 (504.0ms) [eb4a46c3-285]
+INFO:     127.0.0.1:34800 - "WebSocket /api/v1/ws/chat?token=" 403
+INFO:     connection closed
+INFO:     127.0.0.1:34802 - "WebSocket /api/v1/ws/chat?token=" 403
+INFO:     connection rejected (403 Forbidden)
+INFO:     connection closed
+2026-08-15 01:30:02 | INFO     | nydra.api | GET /api/v1/auth/google/login \u2192 307 (59.0ms) [3735a476-848]
+WARNING:  Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.

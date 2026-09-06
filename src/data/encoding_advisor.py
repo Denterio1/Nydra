@@ -1,5 +1,5 @@
 """
-encoding_advisor.py — Smart Encoding Advisor for dataDoctor v0.2.0
+encoding_advisor.py — Smart Encoding Advisor for Nydra v0.2.0
 
 Analyzes categorical columns and recommends the best encoding strategy
 based on cardinality, distribution, target correlation, and ML context.
@@ -250,7 +250,7 @@ def encoding_advisor(
     Analyse all categorical columns and return encoding recommendations.
 
     Args:
-        data:       dataDoctor data dict (must have 'df' key).
+        data:       Nydra data dict (must have 'df' key).
         target_col: optional name of the target/label column.
         model_type: one of 'tree', 'boosting', 'linear', 'neural'.
                     Affects strategy choice (e.g. linear models need one-hot).

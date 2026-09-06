@@ -1,5 +1,5 @@
 """
-dataDoctor — src/smart_report.py
+Nydra — src/smart_report.py
 ==================================
 Professional Multi-Format Report Generator
 
@@ -16,9 +16,9 @@ All formats receive:
     ▸ Dataset Statistics table
     ▸ Per-column null heatmap (PDF/DOCX)
     ▸ PII alert section
-    ▸ Branding: dataDoctor header/footer
+    ▸ Branding: Nydra header/footer
 
-Author  : Kader (Denterio1)
+Author  : Nydra Team
 Version : 1.0.0
 """
 
@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyBboxPatch
 
-logger = logging.getLogger("dataDoctor.smart_report")
+logger = logging.getLogger("nydra.smart_report")
 
 # ── Brand colors ─────────────────────────────────────────────────────────────
 BRAND_PRIMARY   = "#1E3A5F"    # deep navy
@@ -332,7 +332,7 @@ class PDFReportGenerator:
         8. PII Alert (if any)
     """
 
-    def __init__(self, brand_name: str = "dataDoctor"):
+    def __init__(self, brand_name: str = "Nydra"):
         self.brand = brand_name
 
     def _rl_color(self, hex_color: str):
@@ -415,7 +415,7 @@ class PDFReportGenerator:
         canvas.drawString(15 * mm, 3.5 * mm,
                           f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         canvas.drawCentredString(w / 2, 3.5 * mm,
-                                 "Confidential — dataDoctor Report")
+                                 "Confidential — Nydra Report")
         canvas.drawRightString(w - 15 * mm, 3.5 * mm,
                                f"Page {doc.page}")
 
@@ -564,8 +564,8 @@ class PDFReportGenerator:
             pagesize=A4,
             rightMargin=18*mm, leftMargin=18*mm,
             topMargin=24*mm, bottomMargin=18*mm,
-            title=f"dataDoctor Quality Report — {dataset_name}",
-            author="dataDoctor",
+            title=f"Nydra Quality Report — {dataset_name}",
+            author="Nydra",
             subject="Data Quality Intelligence Report",
         )
 
@@ -575,7 +575,7 @@ class PDFReportGenerator:
 
         # ── COVER PAGE ────────────────────────────────────────────────────────
         story.append(Spacer(1, 30*mm))
-        story.append(Paragraph("🩺 dataDoctor", styles["DDTitle"]))
+        story.append(Paragraph("🩺 Nydra", styles["DDTitle"]))
         story.append(Paragraph("Data Quality Intelligence Report", styles["DDSubtitle"]))
         story.append(Spacer(1, 6*mm))
         story.append(HRFlowable(
@@ -621,7 +621,7 @@ class PDFReportGenerator:
         summary_text = (
             f"This report presents a comprehensive data quality analysis of the dataset "
             f"<b>{dataset_name}</b>, evaluated across 7 quality dimensions using the "
-            f"dataDoctor Quality Scoring Engine. "
+            f"Nydra Quality Scoring Engine. "
             f"The dataset contains <b>{profile.dataset_shape[0]:,} rows</b> and "
             f"<b>{profile.dataset_shape[1]} columns</b>. "
             f"<br/><br/>"
@@ -929,7 +929,7 @@ class DOCXReportGenerator:
         # ── TITLE BLOCK ───────────────────────────────────────────────────────
         title_p = doc.add_paragraph()
         title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = title_p.add_run("🩺 dataDoctor — Data Quality Report")
+        run = title_p.add_run("🩺 Nydra — Data Quality Report")
         run.bold     = True
         run.font.size = Pt(22)
         run.font.color.rgb = RGBColor(*self._hex_to_rgb(BRAND_PRIMARY))
@@ -1105,7 +1105,7 @@ class PPTXReportGenerator:
         p   = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         run = p.add_run()
-        run.text = "🩺 dataDoctor"
+        run.text = "🩺 Nydra"
         run.font.bold = True
         run.font.size = Pt(40)
         run.font.color.rgb = RGBColor(255, 255, 255)
@@ -1140,7 +1140,7 @@ class PPTXReportGenerator:
         run3.font.color.rgb = RGBColor(200, 220, 240)
 
         slide.notes_slide.notes_text_frame.text = (
-            "Welcome to the dataDoctor Data Quality Report. "
+            "Welcome to the Nydra Data Quality Report. "
             f"This presentation covers the quality analysis of {dataset_name}."
         )
 
@@ -1184,7 +1184,7 @@ class PPTXReportGenerator:
         p_ftr   = tf_ftr.paragraphs[0]
         p_ftr.alignment = PP_ALIGN.RIGHT
         run_ftr = p_ftr.add_run()
-        run_ftr.text = f"dataDoctor  |  {datetime.now().strftime('%Y-%m-%d')}"
+        run_ftr.text = f"Nydra  |  {datetime.now().strftime('%Y-%m-%d')}"
         run_ftr.font.size = Pt(7)
         run_ftr.font.color.rgb = RGBColor(240, 240, 240)
 
@@ -1420,7 +1420,7 @@ class PPTXReportGenerator:
             "1. Address critical issues (🔴) before deploying the dataset",
             "2. Impute or remove missing values in key columns",
             "3. Anonymize any detected PII columns",
-            "4. Re-run dataDoctor after cleaning to verify improvement",
+            "4. Re-run Nydra after cleaning to verify improvement",
             "5. Export cleaned pipeline via CLI: python cli.py pipeline <file>",
         ]
         for idx, step in enumerate(next_steps):
@@ -1431,7 +1431,7 @@ class PPTXReportGenerator:
                 font_size=13,
             )
         self._add_text_box(
-            s12, "🩺 dataDoctor — github.com/Denterio1/dataDoctor",
+            s12, "🩺 Nydra — github.com/Denterio1/Nydra",
             Inches(0.5), Inches(6.4), Inches(12), Inches(0.5),
             font_size=10, color=BRAND_GRAY,
         )
@@ -1449,7 +1449,7 @@ class PPTXReportGenerator:
 
 class SmartReport:
     """
-    Main entry point for dataDoctor smart report generation.
+    Main entry point for Nydra smart report generation.
 
     Generates PDF, DOCX, and/or PPTX from a QualityProfile.
 
@@ -1470,7 +1470,7 @@ class SmartReport:
     def __init__(
         self,
         output_dir: str = ".",
-        brand_name: str = "dataDoctor",
+        brand_name: str = "Nydra",
     ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1618,7 +1618,7 @@ if __name__ == "__main__":
 
     profile = DataQualityScorer().score(df_test)
 
-    reporter = SmartReport(output_dir="/tmp/datadoctor_reports")
+    reporter = SmartReport(output_dir="/tmp/nydra_reports")
     paths = reporter.generate_all(profile, df_test, "TestDataset",
                                   formats=["pdf", "docx", "pptx"])
 

@@ -1,14 +1,14 @@
 """
-agent.py — dataDoctor: Intelligent Data Orchestration Agent
+agent.py — Nydra: Intelligent Data Orchestration Agent
 ============================================================
-The central brain of dataDoctor. Orchestrates all modules,
+The central brain of nydra. Orchestrates all modules,
 manages sessions, plans pipelines, self-heals on failures,
 and provides a unified API for CLI, Web UI, and REST API.
 
 Usage:
-    from src.core.agent import DataDoctor
+    from src.core.agent import Nydra
 
-    doctor = DataDoctor()
+    doctor = Nydra()
     report = doctor.inspect("examples/sample_sales.csv")
     print(report["summary"])
 
@@ -52,6 +52,26 @@ from src.data.advanced_outlier import (
     EnsembleOutlierDetector,
     OutlierReporter,
 )
+# ── Audit Layer (v0.6.0) ──────────────────────────────
+from src.vision_nlp.data_leakage       import LeakageOrchestrator as DataLeakageDetector
+from src.vision_nlp.label_quality      import LabelQualityAnalyzer as LabelQualityChecker
+from src.vision_nlp.bias_detector      import BiasDetector
+from src.vision_nlp.training_readiness import TrainingReadinessAnalyzer as TrainingReadinessScore
+from src.vision_nlp.audit_orchestrator import AuditOrchestrator, run_image_audit as run_audit, run_image_audit as quick_audit
+from src.vision_nlp.text_orchestrator  import TextOrchestrator, run_text_audit
+from src.vision_nlp.training_orchestrator import TrainingOrchestrator, run_training_audit
+
+
+def _severity_from_rate(rate: float) -> str:
+    """Classify outlier severity from the consensus outlier rate."""
+    if rate >= 0.10:
+        return "high"
+    elif rate >= 0.03:
+        return "medium"
+    elif rate > 0:
+        return "low"
+    return "none"
+
 # ── Optional modules — graceful fallback ───────────────────────────────────
 def _safe_import(module_path: str, names: List[str]) -> Dict[str, Any]:
     """Import names from module, return None for unavailable ones."""
@@ -85,7 +105,7 @@ _adv_stats    = _safe_import("src.data.advanced_stats",      ["AdvancedStats"])
 _quality_sc   = _safe_import("src.data.quality_score",       ["DataQualityScore"])
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("dataDoctor.agent")
+logger = logging.getLogger("nydra.agent")
 
 
 # ─────────────────────────────────────────────
@@ -185,7 +205,7 @@ class PipelinePlanner:
     - User goal
     """
 
-    def __init__(self, agent: "DataDoctor"):
+    def __init__(self, agent: "Nydra"):
         self._agent = agent
 
     def plan(self, df: pd.DataFrame, goal: AgentGoal) -> List[str]:
@@ -325,10 +345,10 @@ class StepExecutor:
 
 
 # ─────────────────────────────────────────────
-#  DataDoctor — Main Agent Class
+#  Nydra — Main Agent Class
 # ─────────────────────────────────────────────
 
-class DataDoctor:
+class Nydra:
     """
     Intelligent data orchestration agent.
 
@@ -338,7 +358,7 @@ class DataDoctor:
     - Maintains session state with undo/redo
     - Caches expensive computations
     - Logs every decision with reasoning
-    - Integrates all 20+ dataDoctor modules
+    - Integrates all 20+ Nydra modules
     - Plugin-ready architecture
 
     Parameters
@@ -390,7 +410,34 @@ class DataDoctor:
     def generate_report(self, profile, df, dataset_name="Dataset",
                     output_dir="reports", formats=["pdf","docx","pptx"]):
         reporter = SmartReport(output_dir=output_dir)
-        return reporter.generate_all(profile, df, dataset_name, formats=formats) 
+        return reporter.generate_all(profile, df, dataset_name, formats=formats)
+     
+    def audit_training_data(self, train_df, test_df=None, target_col="target", sensitive_cols=None):
+        """
+        Runs comprehensive data leakage, bias, and label quality audit on training data.
+        
+        Returns:
+        --------
+        dict containing leakage results, bias findings, and label quality report.
+        """
+        return run_training_audit(train_df, test_df, target_col, sensitive_cols)
+
+    def audit_text(self, text_or_df: Union[str, pd.DataFrame], text_column: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Runs comprehensive text analysis and quality audit.
+        
+        Parameters:
+        -----------
+        text_or_df : str or pd.DataFrame
+            The raw text string or a DataFrame containing a text column.
+        text_column : Optional[str]
+            The column name to analyze if a DataFrame is provided.
+            
+        Returns:
+        --------
+        dict containing intelligence results and quality findings.
+        """
+        return run_text_audit(text_or_df, text_column)
 
     # ─────────────────────────────────────────
     #  Public API
@@ -442,7 +489,7 @@ class DataDoctor:
     def full_pipeline(
         self, df: pd.DataFrame, target_column: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Run everything — the complete dataDoctor pipeline."""
+        """Run everything — the complete Nydra pipeline."""
         self._start_session("full_pipeline", df)
         return self._run_goal(df, AgentGoal.FULL_PIPELINE,
                               target_column=target_column)
@@ -787,15 +834,15 @@ class DataDoctor:
             self._log_decision(
                 "detect_outliers",
                 f"Found {result.n_outliers} outliers ({result.outlier_rate:.1%})",
-                f"Method: {result.method}, Severity: {report['severity']}"
+                f"Method: {result.smart_choice}, Outliers: {result.n_outliers} ({result.outlier_rate:.1%})"
             )
             return {
                 "n_outliers": result.n_outliers,
                 "outlier_rate": result.outlier_rate,
-                "severity": report["severity"],
-                "method_used": result.method,
+                "severity": _severity_from_rate(result.outlier_rate),
+                "method_used": result.smart_choice,  
                 "outlier_indices": result.outlier_indices.tolist(),
-                "recommendations": report["recommendations"],
+                "recommendations": result.recommendations,
                 "report": report,
             }
         except Exception as e:
@@ -976,7 +1023,7 @@ class DataDoctor:
     ) -> str:
         lines = []
         lines.append("=" * 65)
-        lines.append(f"  dataDoctor v{self.VERSION} — Full Report")
+        lines.append(f"  Nydra v{self.VERSION} — Full Report")
         lines.append("=" * 65)
         if source:
             lines.append(f"  Source  : {source}")
@@ -1059,18 +1106,18 @@ class DataDoctor:
 
 def quick_inspect(filepath: str, verbose: bool = True) -> Dict[str, Any]:
     """One-line file inspection."""
-    return DataDoctor(verbose=verbose).inspect(filepath)
+    return Nydra(verbose=verbose).inspect(filepath)
 
 
 def quick_clean(df: pd.DataFrame) -> pd.DataFrame:
     """One-line DataFrame cleaning. Returns cleaned DataFrame."""
-    result = DataDoctor(verbose=False).clean(df)
+    result = Nydra(verbose=False).clean(df)
     return result.get("clean_df", df)
 
 
 def quick_automl(df: pd.DataFrame, target_column: str) -> Dict[str, Any]:
     """One-line AutoML. Returns leaderboard + best model."""
-    return DataDoctor().run_automl(df, target_column)
+    return Nydra().run_automl(df, target_column)
 
 
 def full_analysis(
@@ -1078,5 +1125,5 @@ def full_analysis(
     target_column: Optional[str] = None,
     verbose: bool = True,
 ) -> Dict[str, Any]:
-    """Run the complete dataDoctor pipeline in one call."""
-    return DataDoctor(verbose=verbose).full_pipeline(df, target_column)
+    """Run the complete Nydra pipeline in one call."""
+    return Nydra(verbose=verbose).full_pipeline(df, target_column)

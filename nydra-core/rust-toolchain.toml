@@ -1,0 +1,58 @@
+# ==============================================================================
+# rust-toolchain.toml — Nydra Core (Rust Extension)
+# ==============================================================================
+#
+# PURPOSE:
+#   Locks the entire team (and CI) to a single, verified Rust toolchain.
+#   Without this file, `rustup` uses whatever version happens to be installed
+#   locally — leading to silent ABI mismatches and "works on my machine" bugs.
+#
+# HOW IT WORKS:
+#   When you run `cargo build` or `maturin develop` inside this directory,
+#   rustup reads this file first and automatically downloads + activates the
+#   pinned toolchain before compiling anything.
+#
+# UPDATING THE VERSION:
+#   1. Change `channel` to the new stable release (e.g. "1.80.0")
+#   2. Run `cargo update` to regenerate Cargo.lock
+#   3. Run the full test suite before committing
+#   4. Update the date comment below to match the release date
+#
+# CURRENT PIN: 1.78.0 (released 2024-05-02)
+#   - Stabilizes `LazyLock` (used in nydra_core::stats for thread-safe globals)
+#   - Stabilizes `std::simd` experiment extensions
+#   - Full support for PyO3 0.21 + Maturin 1.5
+#
+# ==============================================================================
+
+[toolchain]
+
+# Pin to a specific stable release — never use "stable" (floating).
+# Floating channels cause non-reproducible builds across developer machines.
+channel = "1.78.0"
+
+# Components installed alongside the compiler:
+#   rustfmt   — code formatting (enforced in CI via `cargo fmt --check`)
+#   clippy    — linter (enforced in CI via `cargo clippy -- -D warnings`)
+#   rust-src  — required by rust-analyzer for IDE auto-complete
+components = ["rustfmt", "clippy", "rust-src"]
+
+# Compile targets:
+#   x86_64-unknown-linux-gnu   — Linux servers + GitHub Actions CI
+#   x86_64-apple-darwin        — macOS Intel (developer machines)
+#   aarch64-apple-darwin       — macOS Apple Silicon (M1/M2/M3)
+#   x86_64-pc-windows-msvc     — Windows (MSVC toolchain required)
+#
+# Note: Cross-compilation to a target not listed here will still work but
+#       requires manually running `rustup target add <target>` first.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+# Profile controls which tools are pre-installed with the toolchain.
+# "minimal" installs only rustc + cargo — nothing extra.
+# We layer our own `components` on top (see above) so this stays lean.
+profile = "minimal"

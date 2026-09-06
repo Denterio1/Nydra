@@ -1,6 +1,6 @@
 """
 db_converter.py — Advanced File-to-SQLite Converter
-dataDoctor v0.5.0
+Nydra v0.5.0
 
 Production-grade converter for ML/AI pipelines.
 
@@ -40,7 +40,7 @@ from typing import Any, Generator
 import numpy as np
 import pandas as pd
 
-logger = logging.getLogger("dataDoctor.converter")
+logger = logging.getLogger("nydra.converter")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. CONSTANTS
@@ -482,7 +482,7 @@ class DataValidator:
         dupes = int(df.duplicated().sum())
         if dupes > 0:
             warnings.append(f"{dupes} duplicate rows found.")
-            recommendations.append("Run dataDoctor cleaning before converting.")
+            recommendations.append("Run Nydra cleaning before converting.")
 
         if len(df) < 10:
             warnings.append("Very small dataset — less than 10 rows.")
@@ -649,11 +649,11 @@ class BatchInserter:
 
 class MLMetadataWriter:
     """
-    Writes a __datadoctor_metadata table with dataset info
+    Writes a __nydra_metadata table with dataset info
     useful for ML pipelines — shape, types, null rates, etc.
     """
 
-    TABLE = "__datadoctor_metadata"
+    TABLE = "__nydra_metadata"
 
     def write(self, conn: sqlite3.Connection, schema: TableSchema, df: pd.DataFrame):
         conn.execute(f"""

@@ -1,8 +1,8 @@
-# 🩺 dataDoctor — Autonomous Data Inspection Agent
+# 🩺 Nydra — Autonomous Data Inspection Agent
 
 > Drop your data. Get answers.
 
-**dataDoctor** is an open-source autonomous agent that inspects, cleans, and prepares your data for Machine Learning — in seconds.
+**Nydra** is an open-source autonomous agent that inspects, cleans, and prepares your data for Machine Learning — in seconds.
 
 No code required. Just upload your file.
 
@@ -29,23 +29,38 @@ No code required. Just upload your file.
 
 ## 🚀 Quick Start
 
-### Option 1 — Web UI (Recommended for most users)
+### Option 1 — Full-Stack App (Recommended)
+
+Nydra now features a modern Next.js frontend and a high-performance FastAPI backend.
 
 ```bash
 # 1. Install dependencies
 pip install -r requirements.txt
+cd frontend && npm install && cd ..
 
-# 2. Launch the web app
-streamlit run app.py
+# 2. Launch both Backend and Frontend
+# Windows (PowerShell):
+./run_nydra.ps1
+
+# Windows (Command Prompt):
+run_new_app.bat
 ```
 
-Your browser will open automatically at `http://localhost:8501`
-
-Upload any CSV, Excel, or JSON file and explore your data instantly.
+**🔐 Automated HTTPS:** On the first run, Nydra will automatically generate self-signed SSL certificates (`cert.pem`, `key.pem`) for `localhost`.
+> **Note:** Your browser will show a security warning for the self-signed certificate. Click **Advanced** -> **Proceed to localhost (unsafe)** to allow the frontend to communicate with the API.
 
 ---
 
-### Option 2 — CLI (For developers)
+### Option 2 — Streamlit UI (Legacy / Lightweight)
+
+```bash
+streamlit run app.py
+```
+Your browser will open at `http://localhost:8501`
+
+---
+
+### Option 3 — CLI (For developers)
 
 ```bash
 # Full inspection report
@@ -65,8 +80,8 @@ python cli.py --help
 **Requirements:** Python 3.11+
 
 ```bash
-git clone https://github.com/Denterio1/dataDoctor.git
-cd dataDoctor
+git clone https://github.com/Denterio1/Nydra.git
+cd Nydra
 pip install -r requirements.txt
 ```
 
@@ -93,7 +108,7 @@ pip install -r requirements.txt
 
 ## ⌨️ CLI Commands
 
-`dataDoctor` provides a comprehensive suite of commands for data analysis and ML preparation.
+`Nydra` provides a comprehensive suite of commands for data analysis and ML preparation.
 
 ### ── Core Inspection
 | Command | Description |
@@ -147,23 +162,23 @@ pip install -r requirements.txt
 
 ## 💡 AI Suggestions Setup
 
-dataDoctor supports any OpenAI-compatible API. Create a `.env` file:
+Nydra supports any OpenAI-compatible API. Create a `.env` file:
 
 ```env
 # Groq (free) — recommended
-DATADOCTOR_API_KEY=your_groq_key
-DATADOCTOR_BASE_URL=https://api.groq.com/openai/v1
-DATADOCTOR_MODEL=llama-3.3-70b-versatile
+NYDRA_API_KEY=your_groq_key
+NYDRA_BASE_URL=https://api.groq.com/openai/v1
+NYDRA_MODEL=llama-3.3-70b-versatile
 
 # Google Gemini (free)
-# DATADOCTOR_API_KEY=your_gemini_key
-# DATADOCTOR_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-# DATADOCTOR_MODEL=gemini-1.5-flash
+# NYDRA_API_KEY=your_gemini_key
+# NYDRA_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+# NYDRA_MODEL=gemini-1.5-flash
 
 # OpenAI (paid)
-# DATADOCTOR_API_KEY=your_openai_key
-# DATADOCTOR_BASE_URL=https://api.openai.com/v1
-# DATADOCTOR_MODEL=gpt-4o-mini
+# NYDRA_API_KEY=your_openai_key
+# NYDRA_BASE_URL=https://api.openai.com/v1
+# NYDRA_MODEL=gpt-4o-mini
 ```
 
 Get a free Groq API key at [console.groq.com](https://console.groq.com)
@@ -173,7 +188,7 @@ Get a free Groq API key at [console.groq.com](https://console.groq.com)
 ## 📁 Project Structure
 
 ```
-dataDoctor/
+Nydra/
 ├── app.py                  ← Web UI (Streamlit)
 ├── cli.py                  ← Command line interface
 ├── requirements.txt
@@ -181,7 +196,7 @@ dataDoctor/
 │
 ├── src/
 │   ├── core/
-│   │   └── agent.py        ← Main DataDoctor agent
+│   │   └── agent.py        ← Main Nydra agent
 │   ├── data/
 │   │   ├── loader.py       ← CSV / Excel / JSON reader
 │   │   ├── analyzer.py     ← Quality checks & statistics
@@ -195,7 +210,7 @@ dataDoctor/
 │   └── report.py           ← HTML report generator
 │
 ├── tests/
-│   └── test_datadoctor.py  ← 38 pytest tests
+│   └── test_nydra.py  ← 38 pytest tests
 │
 └── examples/
     ├── sample_sales.csv

@@ -1,6 +1,6 @@
 """
 db_connector.py — Advanced Database Connection Manager
-dataDoctor v0.5.0
+Nydra v0.5.0
 
 Supports:
   - PostgreSQL, MySQL, SQLite, MariaDB
@@ -11,7 +11,7 @@ Supports:
   - Query History
   - Query Optimizer suggestions
   - Auto Preview
-  - Full compatibility with dataDoctor data dict
+  - Full compatibility with Nydra data dict
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import QueuePool
 
-logger = logging.getLogger("dataDoctor.db")
+logger = logging.getLogger("nydra.db")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -440,7 +440,7 @@ class QueryOptimizer:
 
 class DBConnector:
     """
-    Main entry point for all database operations in dataDoctor.
+    Main entry point for all database operations in nydra.
     """
 
     def __init__(self, config: DBConfig):
@@ -544,7 +544,7 @@ class DBConnector:
         auto_limit : bool = True,
     ) -> dict[str, Any]:
         """
-        Run a validated SQL SELECT and return a dataDoctor-compatible dict.
+        Run a validated SQL SELECT and return a Nydra-compatible dict.
         """
         if not self.is_connected:
             raise RuntimeError("Not connected. Call connect() first.")

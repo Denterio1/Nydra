@@ -1,4 +1,4 @@
-name: dataDoctor CI/CD
+name: Nydra CI/CD
 
 on:
   push:
@@ -80,7 +80,8 @@ jobs:
         context: .
         push: true
         tags: |
-          ${{ secrets.DOCKERHUB_USERNAME }}/datadoctor:latest
-          ${{ secrets.DOCKERHUB_USERNAME }}/datadoctor:${{ github.sha }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/nydra:latest
+          ${{ secrets.DOCKERHUB_USERNAME }}/nydra:${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+

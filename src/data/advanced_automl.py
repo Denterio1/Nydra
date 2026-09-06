@@ -1,5 +1,5 @@
 """
-advanced_automl.py — dataDoctor v0.5.5+
+advanced_automl.py — Nydra v0.5.5+
 =========================================
 Comprehensive AutoML module covering:
   - TaskDetector              : Auto detect classification/regression/multiclass
@@ -20,7 +20,7 @@ Comprehensive AutoML module covering:
   - AutoMLReporter            : Complete audit report + recommendations
   - AdvancedAutoML            : Master class — one call does everything
 
-Author  : dataDoctor Project
+Author  : Nydra Project
 Version : 0.5.0
 """
 
@@ -108,7 +108,7 @@ except ImportError:
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("dataDoctor.automl")
+logger = logging.getLogger("nydra.automl")
 
 
 # ─────────────────────────────────────────────
@@ -1151,7 +1151,7 @@ class PipelineExporter:
         code = "\n".join(imports) + f"""
 
 # ─────────────────────────────────────────
-# dataDoctor — Auto-Generated Pipeline
+# Nydra — Auto-Generated Pipeline
 # Model    : {result.model_name}
 # Task     : {result.task}
 # CV Score : {round(result.cv_mean, 4)} ± {round(result.cv_std, 4)}
@@ -1274,7 +1274,7 @@ class AutoMLReporter:
     def to_markdown(self) -> str:
         report = self.generate()
         lines = [
-            "# 🤖 AutoML Report — dataDoctor",
+            "# 🤖 AutoML Report — Nydra",
             f"**Task:** {report['task']}  ",
             f"**Models Evaluated:** {report['n_models_evaluated']}  ",
             f"**CV Strategy:** {report['cv_strategy']} ({report['n_folds']} folds)  ",
@@ -1743,4 +1743,5 @@ def cash_search(df: pd.DataFrame, target_column: str, n_trials: int = 100) -> Di
     """Run CASH — finds best model + hyperparams in one unified search."""
     aml = AdvancedAutoML()
     return aml.cash_optimize(df, target_column, n_trials=n_trials)
+
 

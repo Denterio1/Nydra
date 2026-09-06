@@ -10,24 +10,24 @@ Supports any OpenAI-compatible API:
 Usage — set these environment variables before running:
 
     Groq (free):
-        set DATADOCTOR_API_KEY=your_groq_key
-        set DATADOCTOR_BASE_URL=https://api.groq.com/openai/v1
-        set DATADOCTOR_MODEL=llama3-8b-8192
+        set NYDRA_API_KEY=your_groq_key
+        set NYDRA_BASE_URL=https://api.groq.com/openai/v1
+        set NYDRA_MODEL=llama3-8b-8192
 
     Gemini (free):
-        set DATADOCTOR_API_KEY=your_gemini_key
-        set DATADOCTOR_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
-        set DATADOCTOR_MODEL=gemini-1.5-flash
+        set NYDRA_API_KEY=your_gemini_key
+        set NYDRA_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+        set NYDRA_MODEL=gemini-1.5-flash
 
     OpenRouter (free tier):
-        set DATADOCTOR_API_KEY=your_openrouter_key
-        set DATADOCTOR_BASE_URL=https://openrouter.ai/api/v1
-        set DATADOCTOR_MODEL=mistralai/mistral-7b-instruct
+        set NYDRA_API_KEY=your_openrouter_key
+        set NYDRA_BASE_URL=https://openrouter.ai/api/v1
+        set NYDRA_MODEL=mistralai/mistral-7b-instruct
 
     OpenAI (paid):
-        set DATADOCTOR_API_KEY=your_openai_key
-        set DATADOCTOR_BASE_URL=https://api.openai.com/v1
-        set DATADOCTOR_MODEL=gpt-4o-mini
+        set NYDRA_API_KEY=your_openai_key
+        set NYDRA_BASE_URL=https://api.openai.com/v1
+        set NYDRA_MODEL=gpt-4o-mini
 """
 
 from __future__ import annotations

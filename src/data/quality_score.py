@@ -1,5 +1,5 @@
 """
-dataDoctor — src/data/quality_score.py
+Nydra — src/data/quality_score.py
 =======================================
 Unified Data Quality Scoring Engine
 
@@ -15,7 +15,7 @@ Dimensions (7):
 Each dimension → 0-100 score + weighted → Overall Score 0-100
 Grade: A (90+), B (75+), C (60+), D (45+), F (<45)
 
-Author  : Kader (Denterio1)
+Author  : Nydra Team
 Version : 1.0.0
 """
 
@@ -32,7 +32,7 @@ import pandas as pd
 from scipy import stats
 
 warnings.filterwarnings("ignore")
-logger = logging.getLogger("dataDoctor.quality")
+logger = logging.getLogger("nydra.quality")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1341,7 +1341,7 @@ class DataQualityScorer:
         sep  = "═" * 65
         sep2 = "─" * 65
         print(f"\n{sep}")
-        print("  dataDoctor — Unified Data Quality Report")
+        print("  Nydra — Unified Data Quality Report")
         print(sep)
         print(f"  Shape     : {profile.dataset_shape[0]:,} rows × {profile.dataset_shape[1]} cols")
         print(f"  Score     : {profile.overall_score:.1f}/100")
@@ -1379,7 +1379,7 @@ class DataQualityScorer:
 def score_quality(df: pd.DataFrame,
                   weights: Optional[Dict[str, float]] = None) -> QualityProfile:
     """
-    One-liner quality scoring for dataDoctor.
+    One-liner quality scoring for nydra.
 
     >>> profile = score_quality(df)
     >>> print(profile.overall_score, profile.grade)

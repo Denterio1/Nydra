@@ -137,7 +137,7 @@ def export_pipeline(
     cat_cols_repr = repr(cat_cols)
 
     code = f'''"""
-Auto-generated sklearn Pipeline by dataDoctor
+Auto-generated sklearn Pipeline by Nydra
 Task     : {task_type.upper()}
 Target   : {target_col}
 Model    : {model_name.replace("_", " ").title()}
@@ -215,11 +215,11 @@ cv_scores = cross_val_score(
 print(f"\\nCross-Validation: {{cv_scores.mean():.4f}} ± {{cv_scores.std():.4f}}")
 
 # ── Save Pipeline ─────────────────────────────────────────────────────────────
-joblib.dump(pipeline, "datadoctor_pipeline.joblib")
-print("\\n✓ Pipeline saved to datadoctor_pipeline.joblib")
+joblib.dump(pipeline, "nydra_pipeline.joblib")
+print("\\n✓ Pipeline saved to nydra_pipeline.joblib")
 
 # ── Load and Predict (example) ────────────────────────────────────────────────
-# loaded_pipeline = joblib.load("datadoctor_pipeline.joblib")
+# loaded_pipeline = joblib.load("nydra_pipeline.joblib")
 # new_data = pd.DataFrame([dict(feature1=value1, feature2=value2)])
 # prediction = loaded_pipeline.predict(new_data)
 '''

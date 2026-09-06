@@ -1,0 +1,155 @@
+# ==============================================================================
+# Cargo.toml — Nydra Core (High-Performance Rust Extension)
+# ==============================================================================
+#
+# This file is the "heart" of the Rust project. It tells Cargo (Rust's build
+# system) everything it needs to know:
+#   1. WHO we are        — package name, version, authors
+#   2. WHAT we build     — a cdylib (C-compatible shared library) that Python loads
+#   3. HOW we depend     — external crates (Rust's word for "libraries")
+#   4. HOW we optimize   — release vs debug profiles
+#
+# BUILD INSTRUCTIONS:
+#   Development (editable install):
+#     pip install maturin
+#     maturin develop --release
+#
+#   Production wheel (distributable):
+#     maturin build --release
+#     pip install target/wheels/nydra_core-*.whl
+#
+#   After installation, use in Python:
+#     import nydra_core
+#     result = nydra_core.std_dev([1.0, 2.0, 3.0, 4.0, 5.0])
+#
+# ==============================================================================
+
+[package]
+
+name    = "nydra-core"
+version = "0.1.0"
+edition = "2021"        # Rust 2021 edition — best defaults, cleaner imports
+authors = ["Nydra Contributors"]
+description = "High-performance statistical compute engine for Nydra (Python extension)"
+repository  = "https://github.com/Denterio1/nydra"
+license     = "MIT"
+readme      = "README.md"
+
+# Minimum Rust version required to compile this crate.
+# Anyone on an older rustc gets a clear error instead of a cryptic compile failure.
+rust-version = "1.78.0"
+
+# ==============================================================================
+# LIBRARY TARGET
+# ==============================================================================
+#
+# We build TWO artifact types from the same source:
+#
+#   cdylib  — A C-compatible dynamic library (.so on Linux, .dylib on macOS,
+#             .pyd on Windows). This is what Python imports via PyO3.
+#             Name on disk: nydra_core.so (Linux), nydra_core.pyd (Windows)
+#
+#   rlib    — A Rust static library used when other Rust crates depend on us.
+#             Required for `cargo test` and future Rust-to-Rust integration.
+#
+[lib]
+name   = "_nydra_core_binary"
+crate-type = ["cdylib", "rlib"]
+
+# ==============================================================================
+# DEPENDENCIES
+# ==============================================================================
+
+[dependencies]
+
+# --- Python Bridge ---
+# PyO3: The de-facto standard for writing Python extensions in Rust.
+# Gives us Python types (PyList, PyDict, etc.) and the #[pyfunction] / #[pymodule]
+# macros that auto-generate all the FFI boilerplate.
+# "extension-module" feature is mandatory for cdylib builds — it tells PyO3
+# not to link libpython statically (Python loads us, not the other way around).
+pyo3 = { version = "0.21", features = ["extension-module"] }
+
+# --- Parallel Computation ---
+# Rayon: Data-parallelism library. Works like Python's multiprocessing but with
+# zero overhead and automatic work-stealing across all CPU cores.
+# Usage: slice.par_iter().map(...).sum() — that's it. Rayon handles the threads.
+# Benchmark: 8-12x speedup on statistical kernels vs single-threaded Python.
+rayon = "1.10"
+
+# --- Numerical Computing ---
+# ndarray: N-dimensional arrays for Rust (think NumPy, but compiled).
+# We use it for matrix operations in correlation and covariance calculations.
+# "rayon" feature enables automatic parallel iteration over array elements.
+ndarray = { version = "0.15", features = ["rayon"] }
+
+# --- Serialization ---
+# serde + serde_json: Serialize Rust structs to JSON so Python can receive
+# rich structured results (not just primitive floats).
+# "derive" feature auto-generates Serialize/Deserialize from struct fields.
+serde      = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# --- Error Handling ---
+# thiserror: Generates boilerplate-free custom error types via derive macros.
+# Lets us define `NydraError` with clean Display messages instead of
+# writing impl fmt::Display manually for every variant.
+thiserror = "1.0"
+
+# --- Math / Statistics ---
+# statrs: Pure-Rust statistical distributions and functions.
+# Used for chi-squared CDF, normal distribution PDF/CDF, t-distribution, etc.
+# Without this we'd have to implement all special functions from scratch.
+statrs = "0.16"
+
+# --- Hashing (for duplicate detection) ---
+# Used in perceptual hash support utilities called from image_analyzer.py
+ahash = "0.8"   # Fastest non-cryptographic hash available in Rust ecosystem
+
+# ==============================================================================
+# OPTIONAL FEATURE FLAGS
+# ==============================================================================
+#
+# Features let downstream code (or CI) opt into heavier dependencies only when
+# needed. Run `maturin develop --features simd` to enable SIMD paths.
+
+[features]
+
+default = []  # No optional features enabled by default — keep baseline lean
+
+# simd: Enables hand-written SIMD intrinsics for hot loops (sum, dot product).
+# Requires nightly Rust (std::simd is still unstable as of 1.78).
+# Only enable if you're on nightly and benchmarking shows gains beyond Rayon.
+simd = []
+
+# full: Convenience alias that enables all optional features at once.
+full = ["simd"]
+
+# ==============================================================================
+# BUILD PROFILES
+# ==============================================================================
+
+[profile.dev]
+# Dev builds: fast to compile, easy to debug (full debug info, no optimization)
+opt-level = 0           # No optimization — shortest compile time
+debug     = true        # Full debug symbols (required for gdb / lldb)
+overflow-checks = true  # Panic on integer overflow — catches bugs in dev
+
+[profile.release]
+# Release builds: maximum runtime performance for production
+opt-level     = 3       # Highest optimization level
+lto           = true    # Link-Time Optimization — cross-function inlining
+codegen-units = 1       # Single codegen unit — enables maximum inlining
+panic         = "abort" # Abort on panic (no stack unwinding) — smaller binary
+strip         = true    # Strip debug symbols — smaller .so file
+overflow-checks = false # Remove overflow checks — safe because we validate inputs in Python
+
+# ==============================================================================
+# WORKSPACE METADATA (for `cargo metadata` and tooling)
+# ==============================================================================
+
+[package.metadata.maturin]
+# Tells maturin which Python module name to produce.
+# After `maturin develop`, Python sees: `import nydra_core`
+python-source = "python"
+module-name   = "nydra_core"

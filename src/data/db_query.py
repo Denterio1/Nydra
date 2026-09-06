@@ -1,5 +1,5 @@
 """
-db_query.py — Query Interface for dataDoctor v0.5.0
+db_query.py — Query Interface for Nydra v0.5.0
 Sits between db_connector.py and the UI.
 
 Features:
@@ -7,7 +7,7 @@ Features:
   - SQL editor with validation
   - Saved/favourite queries
   - Auto-suggestions
-  - Result → dataDoctor data dict
+  - Result → Nydra data dict
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from src.data.db_connector import DBConnector, validate_sql
 # 1. SAVED QUERIES
 # ══════════════════════════════════════════════════════════════════════════════
 
-SAVED_QUERIES_FILE = "datadoctor_saved_queries.json"
+SAVED_QUERIES_FILE = "nydra_saved_queries.json"
 
 
 @dataclass
@@ -166,7 +166,7 @@ class TableBrowser:
 class SQLEditor:
     """
     Validates, runs, and explains SQL queries.
-    Returns dataDoctor-compatible data dicts.
+    Returns Nydra-compatible data dicts.
     """
 
     def __init__(self, connector: DBConnector):
@@ -181,7 +181,7 @@ class SQLEditor:
         limit     : int  = 10_000,
         auto_limit: bool = True,
     ) -> dict[str, Any]:
-        """Validate and execute SQL, return dataDoctor data dict."""
+        """Validate and execute SQL, return Nydra data dict."""
         safe, reason = validate_sql(sql)
         if not safe:
             raise ValueError(reason)

@@ -1,5 +1,5 @@
 """
-security.py — Security & UX Module for dataDoctor
+security.py — Security & UX Module for Nydra
 
 Features:
     - Rate limiting per user
@@ -26,12 +26,12 @@ from typing import Any
 # Configuration
 # ══════════════════════════════════════════════════════════════════════════════
 
-MAX_FILE_SIZE_MB    = 500
-ALLOWED_EXTENSIONS  = {".csv", ".xlsx", ".xls", ".json"}
+MAX_FILE_SIZE_MB    = 10000
+ALLOWED_EXTENSIONS  = {".csv", ".xlsx", ".xls", ".json", ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
 MAX_REQUESTS_PER_MIN= 30
 SESSION_TIMEOUT_MIN = 60
 MAX_COLUMNS         = 500
-MAX_ROWS            = 1_000_000
+MAX_ROWS            = 50_000_000
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -16,8 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create non-root user
-RUN useradd -m -u 1000 datadoctor && chown -R datadoctor:datadoctor /app
-USER datadoctor
+RUN useradd -m -u 1000 nydra && chown -R nydra:nydra /app
+USER nydra
 
 # Expose port
 EXPOSE 8501
@@ -32,3 +32,4 @@ ENTRYPOINT ["streamlit", "run", "app.py", \
     "--server.address=0.0.0.0", \
     "--server.headless=true", \
     "--browser.gatherUsageStats=false"]
+

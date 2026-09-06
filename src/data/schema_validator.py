@@ -1,5 +1,5 @@
 """
-schema_validator.py — Data Schema Validator for dataDoctor v0.2.0
+schema_validator.py — Data Schema Validator for Nydra v0.2.0
 
 Validates a DataFrame against a user-defined schema.
 Supports:
@@ -325,7 +325,7 @@ def validate_schema(
     schema: dict[str, FieldSchema],
 ) -> dict[str, Any]:
     """
-    Validate a dataDoctor data dict against a schema.
+    Validate a Nydra data dict against a schema.
 
     Returns:
         {

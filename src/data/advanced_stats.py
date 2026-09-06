@@ -1,5 +1,5 @@
 """
-advanced_stats.py — dataDoctor v0.5.0+
+advanced_stats.py — Nydra v0.5.0+
 ========================================
 Comprehensive statistical analysis module covering:
 
@@ -18,7 +18,7 @@ Comprehensive statistical analysis module covering:
   StatsReporter            : Full audit report + recommendations
   AdvancedStats            : Master class — compute_all() does everything
 
-Author  : dataDoctor Project
+Author  : Nydra Project
 Version : 0.5.0
 """
 
@@ -44,7 +44,7 @@ from scipy.stats import rv_continuous
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("dataDoctor.stats")
+logger = logging.getLogger("nydra.stats")
 
 # Optional statsmodels for advanced tests
 try:
@@ -218,23 +218,28 @@ class DescriptiveStats:
         return result
 
     def _col_stats(self, col: str, data: np.ndarray) -> Dict:
+        from src import nydra_core
         n = len(data)
-        mean = float(np.mean(data))
-        median = float(np.median(data))
-        std = float(np.std(data, ddof=1))
-        var = float(np.var(data, ddof=1))
+        
+        # Use nydra_core for full descriptive stats in a single pass (potentially parallel)
+        core_stats = nydra_core.full_descriptive(data.tolist())
+        
+        mean = core_stats["mean"]
+        median = core_stats["median"]
+        std = core_stats["std_dev_sample"]
+        var = core_stats["variance_sample"]
         sem = float(stats.sem(data))
 
         # Robust measures
         trimmed_mean = float(trim_mean(data, self.trim))
         wins_mean = float(stats.mstats.winsorize(data, limits=[0.05, 0.05]).mean())
-        mad = float(np.median(np.abs(data - median)))
-        iqr_val = float(iqr(data))
-        cv = float(std / mean * 100) if mean != 0 else np.nan
+        mad = core_stats["mad"]
+        iqr_val = core_stats["iqr"]
+        cv = core_stats["cv"]
 
         # Moments
-        skewness = float(stats.skew(data))
-        kurt = float(stats.kurtosis(data))            # excess kurtosis
+        skewness = core_stats["skewness"]
+        kurt = core_stats["kurtosis"]            # excess kurtosis
         kurt_type = self._kurtosis_type(kurt)
 
         # Confidence interval for mean
@@ -1475,7 +1480,7 @@ class StatsReporter:
         report = self.generate()
         summary = report["summary"]
         lines = [
-            "# 📊 Advanced Statistics Report — dataDoctor",
+            "# 📊 Advanced Statistics Report — Nydra",
             f"**Columns Analyzed:** {summary['n_columns_analyzed']}  ",
             f"**Normal:** {summary['n_normal']} | **Non-Normal:** {summary['n_non_normal']}  ",
             "",

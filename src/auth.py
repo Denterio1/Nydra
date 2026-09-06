@@ -1,123 +1,101 @@
 """
-auth.py — User Authentication & Database (Supabase)
-
-Simplified version without OAuth.
+auth.py — Nydra Authentication & Identity Hub
+==============================================
+JWT management and password hashing via SecurityVault.
 """
 
 from __future__ import annotations
 import os
-from datetime import datetime
-from typing import Any
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Optional
 
 from dotenv import load_dotenv
+from jose import JWTError, jwt
+
 load_dotenv()
 
+from src.security_vault import get_vault
 
-def _get_client():
-    """Get Supabase client."""
+vault = get_vault()
+
+
+def _require_secret(name: str) -> str:
+    """Load a signing secret from the environment. No predictable fallbacks."""
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(
+            f"{name} is not set. Add a long random value to your .env file "
+            f"(e.g. python -c \"import secrets; print(secrets.token_urlsafe(48))\")."
+        )
+    if len(value) < 32:
+        raise RuntimeError(f"{name} must be at least 32 characters.")
+    return value
+
+
+SECRET_KEY = _require_secret("SECRET_KEY")
+REFRESH_SECRET = _require_secret("REFRESH_SECRET")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_EXPIRE_MINUTES", "60"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_EXPIRE_DAYS", "7"))
+
+
+def hash_password(password: str) -> str:
+    """Hash a password using SecurityVault (PBKDF2)."""
+    return vault.hash(password, context="auth")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its vault-generated hash."""
+    if not hashed_password:
+        return False
+    return vault.verify_hash(plain_password, hashed_password, context="auth")
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a secure JWT access token."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_refresh_token(data: dict) -> str:
+    import secrets
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({"exp": expire, "type": "refresh", "jti": secrets.token_urlsafe(16)})
+    return jwt.encode(to_encode, REFRESH_SECRET, algorithm=ALGORITHM)
+
+
+def verify_token(token: str, is_refresh: bool = False) -> dict | None:
+    """Verify and decode a JWT token."""
     try:
-        from supabase import create_client
-        url = os.environ.get("SUPABASE_URL", "")
-        key = os.environ.get("SUPABASE_KEY", "")
-        if not url or not key:
-            return None
-        return create_client(url, key)
-    except Exception:
+        key = REFRESH_SECRET if is_refresh else SECRET_KEY
+        return jwt.decode(token, key, algorithms=[ALGORITHM])
+    except JWTError:
         return None
 
 
-def sync_user_to_db(user: Any) -> None:
-    """Sync user to public.users table."""
-    client = _get_client()
-    if not client or not user:
-        return
-
-    try:
-        # Get metadata
-        user_id = user.get("id")
-        email = user.get("email")
-        name = user.get("name") or (email.split("@")[0] if email else "User")
-        plan = user.get("plan", "professional")
-
-        client.table("users").upsert({
-            "id": user_id,
-            "email": email,
-            "name": name,
-            "last_seen": datetime.now().isoformat(),
-            "plan": plan
-        }).execute()
-    except Exception as e:
-        print(f"Warning: Could not sync user to DB: {e}")
-
-
-def sign_up(email: str, password: str, name: str = "") -> dict[str, Any] | str:
-    """Register a new user (Legacy)."""
-    return "Registration is disabled in this version."
-
-
-def sign_in(email: str, password: str) -> dict[str, Any] | str:
-    """Authenticate a user (Legacy)."""
-    return "Login is disabled in this version."
-
-
-def register_or_login(email: str, name: str = "") -> dict[str, Any] | None:
-    """Legacy support for email-only flow."""
-    return {
-        "id": "guest_user",
-        "email": email or "guest@example.com",
-        "name": name or "Guest",
-        "plan": "professional"
-    }
-
-
-def log_session(
-    email:     str,
-    file_name: str,
-    file_size: int,
-    action:    str,
-    ml_score:  int = 0,
-) -> None:
-    """Log a user session/action."""
-    client = _get_client()
-    if not client:
-        return
-
-    try:
-        # Get user ID
-        result = client.table("users").select("id").eq("email", email).execute()
-        if not result.data:
-            return
-
-        user_id = result.data[0]["id"]
-
-        client.table("sessions").insert({
-            "user_id":    user_id,
-            "file_name":  file_name,
-            "file_size":  file_size,
-            "action":     action,
-            "ml_score":   ml_score,
-            "created_at": datetime.now().isoformat(),
-        }).execute()
-    except Exception:
-        pass
+def generate_user_id() -> str:
+    """Generate a unique ID for a new user."""
+    return str(uuid.uuid4())
 
 
 def get_user_stats(email: str) -> dict[str, Any]:
-    """Get usage statistics for a user."""
+    """
+    Get usage statistics for a user.
+    Note: In a full implementation, this queries the SQL database.
+    """
     return {
-        "name":            "Guest",
-        "plan":            "professional",
-        "total_sessions":  0,
-        "files_analysed":  0,
-        "avg_ml_score":    0,
-        "last_seen":       datetime.now().isoformat()[:19].replace("T", " "),
-        "member_since":    datetime.now().isoformat()[:10],
+        "name": email.split("@")[0].title() if "@" in email else "User",
+        "plan": "professional",
+        "total_sessions": 0,
+        "files_analysed": 0,
+        "avg_ml_score": 0,
+        "last_seen": datetime.now().isoformat()[:19].replace("T", " "),
+        "member_since": datetime.now().isoformat()[:10],
     }
-
-
-def is_supabase_configured() -> bool:
-    """Check if Supabase is properly configured."""
-    return bool(
-        os.environ.get("SUPABASE_URL") and
-        os.environ.get("SUPABASE_KEY")
-    )

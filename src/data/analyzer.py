@@ -1,6 +1,11 @@
 import pandas as pd
 import math
+import os
+import logging
 from typing import Any
+from src.data.duck_engine import get_duck_engine
+
+logger = logging.getLogger("nydra.analyzer")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -41,6 +46,13 @@ def _safe_float(val: Any) -> float | None:
 
 def shape(data: dict[str, Any]) -> dict[str, int]:
     df = _get_df(data)
+    engine = get_duck_engine()
+    if engine.is_ready:
+        try:
+            return engine.get_shape(df)
+        except Exception:
+            pass
+            
     return {
         "rows": int(df.shape[0]),
         "columns": int(df.shape[1]),
@@ -49,12 +61,26 @@ def shape(data: dict[str, Any]) -> dict[str, int]:
 
 def missing_values(data: dict[str, Any]) -> dict[str, int]:
     df = _get_df(data)
+    engine = get_duck_engine()
+    if engine.is_ready:
+        try:
+            return engine.get_missing_values(df)
+        except Exception:
+            pass
+
     counts = df.isna().sum().to_dict()
     return {str(k): int(v) for k, v in counts.items()}
 
 
 def duplicate_rows(data: dict[str, Any]) -> int:
     df = _get_df(data)
+    engine = get_duck_engine()
+    if engine.is_ready:
+        try:
+            return engine.get_duplicate_count(df)
+        except Exception:
+            pass
+
     try:
         return int(df.duplicated().sum())
     except Exception:
@@ -63,9 +89,18 @@ def duplicate_rows(data: dict[str, Any]) -> int:
 
 
 def basic_stats(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    # Attempt DuckDB acceleration first
+    df = _get_df(data)
+    engine = get_duck_engine()
+    if engine.is_ready:
+        try:
+            return engine.get_basic_stats(df)
+        except Exception:
+            pass
+
     stats: dict[str, dict[str, Any]] = {}
 
-    # Maintain original dictionary-based logic if rows/columns exist
+    # Maintain original dictionary-based logic if rows/columns exist (legacy support)
     if "rows" in data and "columns" in data:
         rows = data["rows"]
         columns = data["columns"]
@@ -117,8 +152,6 @@ def basic_stats(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         return stats
 
     # Fallback to pandas-based logic
-    df = _get_df(data)
-
     for col in df.columns:
         series = df[col].dropna()
 
@@ -183,6 +216,30 @@ def detect_outliers(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def full_report(data: dict[str, Any]) -> dict[str, Any]:
+    df = _get_df(data)
+    engine = get_duck_engine()
+    source_path = data.get("source")
+    
+    # ── High-Performance Path ────────────────────────────────────────────────
+    if engine.is_ready:
+        try:
+            # 1. Direct File Profiling (Fastest, zero-RAM for stats)
+            if source_path and os.path.exists(source_path) and source_path.endswith('.csv'):
+                report = engine.profile_file(source_path)
+                if report:
+                    report["outliers"] = detect_outliers(data)
+                    return report
+
+            # 2. DataFrame Profiling (Fast, SQL-accelerated)
+            report = engine.full_profile(df)
+            if report:
+                # Add outliers manually for now as it uses a different logic
+                report["outliers"] = detect_outliers(data)
+                return report
+        except Exception as e:
+            logger.error(f"DuckDB high-performance path failed: {e}")
+
+    # ── Standard Path (Fallback) ─────────────────────────────────────────────
     return {
         "shape":          shape(data),
         "missing_values": missing_values(data),

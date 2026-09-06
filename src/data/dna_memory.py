@@ -29,7 +29,7 @@ from src.data.cognitive_dna import DataDNA, DNASimilarityEngine, SimilarityRepor
 # ── Database path (Move to root for consistency) ──────────────────────────────
 DNA_DB_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "datadoctor_dna.db"
+    "nydra_dna.db"
 )
 
 
