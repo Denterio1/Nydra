@@ -31,11 +31,13 @@ import shutil
 import time
 import traceback
 import uuid
+import httpx
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
-
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from urllib.parse import urlencode
 # ─────────────────────────────────────────────────────────────────────────────
 # THIRD-PARTY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,6 +139,7 @@ from src.api_schemas import (
     WSResultPayload,
     WSStepPayload,
     WSWarningPayload,
+    GoogleExchangeRequest,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +164,19 @@ LOG_LEVEL        = os.getenv("LOG_LEVEL", "INFO")
 WORKER_COUNT     = int(os.getenv("WORKER_COUNT", 4))
 JOB_TIMEOUT_S    = int(os.getenv("JOB_TIMEOUT_SECONDS", 1800))  # 30 min max
 API_KEY_PREFIX   = "nydra_sk_"
+
+
+
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI  = os.getenv("OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/api/v1/auth/google/callback")
+GOOGLE_AUTH_URL      = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL     = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL  = "https://www.googleapis.com/oauth2/v3/userinfo"
+OAUTH_STATE_EXPIRE_MIN = 10  # state token is short-lived, just covers the popup round trip
+
+
+
 
 ALLOWED_EXTENSIONS = {
     "csv", "xlsx", "xls", "json", "tsv", "parquet",
@@ -191,16 +207,17 @@ class Base(DeclarativeBase):
 
 class DBUser(Base):
     __tablename__ = "users"
-    id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    username       = Column(String(50), unique=True, nullable=False, index=True)
-    email          = Column(String(255), unique=True, nullable=False, index=True)
-    hashed_password = Column(String(255), nullable=False)
-    is_active      = Column(Boolean, default=True)
-    is_admin       = Column(Boolean, default=False)
-    created_at     = Column(DateTime, default=datetime.utcnow)
-    last_login     = Column(DateTime, nullable=True)
-    settings       = Column(JSON, default=dict)
-
+    id               = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username         = Column(String(50), unique=True, nullable=False, index=True)
+    email            = Column(String(255), unique=True, nullable=False, index=True)
+    hashed_password  = Column(String(255), nullable=True)   # ← changed: nullable now
+    google_id        = Column(String(255), unique=True, nullable=True, index=True)   # ← new
+    profile_image    = Column(String(500), nullable=True)                             # ← new
+    is_active        = Column(Boolean, default=True)
+    is_admin         = Column(Boolean, default=False)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    last_login       = Column(DateTime, nullable=True)
+    settings         = Column(JSON, default=dict)
 
 class DBAPIKey(Base):
     __tablename__ = "api_keys"
@@ -1362,6 +1379,212 @@ async def logout(body: TokenRefresh, db: AsyncSession = Depends(get_db)):
     await db.commit()
     return {"message": "Logged out successfully"}
 
+def _make_oauth_state(frontend_origin: str) -> str:
+    """
+    Short-lived signed token carrying the frontend_origin through the Google
+    redirect round trip. Reuses the same SECRET_KEY/jwt setup as access
+    tokens, but with its own 'type' so it can never be mistaken for one.
+    """
+    exp = datetime.utcnow() + timedelta(minutes=OAUTH_STATE_EXPIRE_MIN)
+    return jwt.encode(
+        {"frontend_origin": frontend_origin, "exp": exp, "type": "oauth_state"},
+        SECRET_KEY, algorithm=ALGORITHM,
+    )
+
+
+def _verify_oauth_state(state: str) -> str:
+    """Returns the frontend_origin embedded in the state, or raises."""
+    try:
+        payload = jwt.decode(state, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "oauth_state":
+            raise JWTError("Wrong state token type")
+        return payload["frontend_origin"]
+    except JWTError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid or expired OAuth state: {e}")
+
+
+async def _exchange_google_code(code: str) -> Dict[str, Any]:
+    """Exchanges an authorization code for Google tokens, then fetches the profile."""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=500, detail="Google OAuth is not configured on this server")
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        token_resp = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+        )
+        if token_resp.status_code != 200:
+            log.warning("Google token exchange failed: %s", token_resp.text)
+            raise HTTPException(status_code=401, detail="Google sign-in failed (token exchange)")
+
+        access_token = token_resp.json().get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=401, detail="Google sign-in failed (no access token)")
+
+        profile_resp = await client.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if profile_resp.status_code != 200:
+            log.warning("Google userinfo fetch failed: %s", profile_resp.text)
+            raise HTTPException(status_code=401, detail="Google sign-in failed (profile fetch)")
+
+        return profile_resp.json()  # contains: sub, email, name, picture, email_verified, ...
+
+
+def _username_from_email(email: str) -> str:
+    """Derives a valid Nydra username (matches UserRegister's pattern) from an email local-part."""
+    import re
+    local = email.split("@")[0]
+    cleaned = re.sub(r"[^a-zA-Z0-9_]", "", local)
+    if len(cleaned) < 3:
+        cleaned = (cleaned + "user")[:3] if cleaned else "user"
+    return cleaned[:40]  # leave room for a numeric suffix under the 50-char limit
+
+
+async def _get_or_create_google_user(db: AsyncSession, profile: Dict[str, Any]) -> DBUser:
+    google_id = profile.get("sub")
+    email     = profile.get("email")
+    picture   = profile.get("picture")
+
+    if not google_id or not email:
+        raise HTTPException(status_code=400, detail="Google profile missing required fields")
+
+    # 1. Existing Google-linked account
+    result = await db.execute(select(DBUser).where(DBUser.google_id == google_id))
+    user = result.scalar_one_or_none()
+    if user:
+        return user
+
+    # 2. Existing email/password account — link Google to it
+    result = await db.execute(select(DBUser).where(DBUser.email == email))
+    user = result.scalar_one_or_none()
+    if user:
+        await db.execute(
+            update(DBUser).where(DBUser.id == user.id).values(
+                google_id=google_id,
+                profile_image=picture,
+            )
+        )
+        await db.commit()
+        await db.refresh(user)
+        return user
+
+    # 3. Brand new user — pick a unique username, deduping against collisions
+    base_username = _username_from_email(email)
+    username = base_username
+    suffix = 0
+    while True:
+        existing = await db.execute(select(DBUser).where(DBUser.username == username))
+        if not existing.scalar_one_or_none():
+            break
+        suffix += 1
+        username = f"{base_username}{suffix}"
+
+    user = DBUser(
+        id=str(uuid.uuid4()),
+        username=username,
+        email=email,
+        hashed_password=None,
+        google_id=google_id,
+        profile_image=picture,
+        is_active=True,
+        settings=UserSettings().model_dump(),
+    )
+    db.add(user)
+    await db.commit()
+    log.info("New user registered via Google: %s (%s)", username, email)
+    return user
+
+
+@app.get("/api/v1/auth/google/login", tags=["Auth"])
+async def google_login(frontend_origin: str = Query(...)):
+    """
+    Step 1 of the popup flow: builds Google's consent URL and redirects
+    the popup window there. `frontend_origin` is carried through in a
+    signed state token so the callback knows which window to postMessage.
+    """
+    state = _make_oauth_state(frontend_origin)
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    query = urlencode(params)
+    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{query}")
+
+
+@app.get("/api/v1/auth/google/callback", tags=["Auth"])
+async def google_callback(code: Optional[str] = Query(None), state: Optional[str] = Query(None), error: Optional[str] = Query(None)):
+    """
+    Step 2: Google redirects here after the user approves (or denies).
+    We don't do the token exchange here — we just relay the `code` back to
+    the popup's opener window via postMessage, matching what Auth.tsx's
+    startGoogleLogin() already listens for. The actual exchange happens in
+    POST /api/v1/auth/google/exchange, called by the opener window itself.
+    """
+    frontend_origin = _verify_oauth_state(state) if state else None
+    target_origin = frontend_origin or ALLOWED_ORIGINS[0]
+
+    if error or not code:
+        message_js = f"""
+            window.opener && window.opener.postMessage(
+                {{ type: "nydra_oauth", error: {json.dumps(error or "access_denied")} }},
+                {json.dumps(target_origin)}
+            );
+            window.close();
+        """
+    else:
+        message_js = f"""
+            window.opener && window.opener.postMessage(
+                {{ type: "nydra_oauth", code: {json.dumps(code)} }},
+                {json.dumps(target_origin)}
+            );
+            window.close();
+        """
+
+    html = f"<!DOCTYPE html><html><body><script>{message_js}</script></body></html>"
+    return HTMLResponse(content=html)
+
+
+@app.post("/api/v1/auth/google/exchange", response_model=TokenResponse, tags=["Auth"])
+async def google_exchange(body: GoogleExchangeRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Step 3: the opener window (Auth.tsx) POSTs the code it received via
+    postMessage. We exchange it server-side for the Google profile,
+    find-or-create the Nydra user, and issue normal Nydra JWT tokens.
+    """
+    profile = await _exchange_google_code(body.code)
+    user    = await _get_or_create_google_user(db, profile)
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account deactivated")
+
+    access_token             = make_access_token(user.id, user.username)
+    raw_refresh, refresh_exp = make_refresh_token(user.id)
+
+    db.add(DBRefreshToken(
+        user_id=user.id,
+        token_hash=sha256(raw_refresh),
+        expires_at=refresh_exp,
+    ))
+    await db.execute(update(DBUser).where(DBUser.id == user.id).values(last_login=datetime.utcnow()))
+    await db.commit()
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=raw_refresh,
+        expires_in=ACCESS_EXPIRE * 60,
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — API Keys

@@ -99,7 +99,14 @@ export default function Auth({ onLogin, apiUrl }: AuthProps) {
         });
         applyTokens(res.data);
       } catch (err: any) {
-        setError(err.response?.data?.detail || "Google sign-in failed.");
+        const detail = err.response?.data?.detail;
+        const message =
+          typeof detail === "string"
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((d: any) => d.msg || JSON.stringify(d)).join(", ")
+            : "Google sign-in failed.";
+        setError(message);
       } finally {
         setLoading(false);
       }

@@ -1,6 +1,6 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    NYDRA — API Schemas v1.0                         ║
+║                    NYDRA — API Schemas                        ║
 ║              Complete Type Contract: Python ↔ React                 ║
 ║                                                                      ║
 ║  Every request, response, WebSocket message, and result             ║
@@ -180,14 +180,8 @@ class UserRegister(NydraBase):
 
 
 class UserLogin(NydraBase):
-    """Login with username or email in the `username` field (kept for API compat)."""
-    username: str = Field(..., min_length=3, description="Username or email address")
+    username: str = Field(..., min_length=3)
     password: str = Field(..., min_length=1)
-
-
-class OAuthCodeExchange(NydraBase):
-    """Exchange a one-time OAuth code for JWT tokens."""
-    code: str = Field(..., min_length=16)
 
 
 class UserPublic(NydraBase):
@@ -207,6 +201,12 @@ class TokenResponse(NydraBase):
 
 class TokenRefresh(NydraBase):
     refresh_token: str
+
+
+class GoogleExchangeRequest(NydraBase):
+    """Sent by Auth.tsx after the OAuth popup relays back a `code`."""
+    code: str = Field(..., min_length=1)
+  
 
 
 class APIKeyCreate(NydraBase):
@@ -234,22 +234,12 @@ class APIKeyFull(APIKeyPublic):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class UserSettings(NydraBase):
-    # Core Preferences
     default_goal:              JobGoal         = JobGoal.FULL_PIPELINE
     default_outlier_method:    OutlierMethod   = OutlierMethod.SMART
     default_imputation_method: ImputationMethod = ImputationMethod.SMART
     default_automl_trials:     int             = Field(50, ge=10, le=500)
     default_report_format:     ReportFormat    = ReportFormat.JSON
-    
-    # AI / LLM Config
-    llm_provider:              str             = Field("groq", description="e.g. 'groq', 'openai', 'anthropic'")
-    llm_model:                 str             = Field("llama-3.3-70b-versatile")
-    llm_api_key:               Optional[str]   = Field(None, description="Sensitive: will be vault-encrypted")
-    llm_temperature:           float           = Field(0.2, ge=0.0, le=1.0)
-    llm_max_tokens:            int             = Field(1500, ge=500, le=4000)
-    
-    # System Preferences
-    max_file_size_mb:          int             = Field(10000, ge=1, le=10000)
+    max_file_size_mb:          int             = Field(500, ge=1, le=5000)
     enable_pii_detection:      bool            = True
     enable_bias_detection:     bool            = True
     theme:                     Literal["dark", "light", "system"] = "dark"
@@ -264,38 +254,10 @@ class UserSettingsUpdate(NydraBase):
     default_imputation_method: Optional[ImputationMethod]  = None
     default_automl_trials:     Optional[int]               = Field(None, ge=10, le=500)
     default_report_format:     Optional[ReportFormat]      = None
-    
-    # AI / LLM Config
-    llm_provider:              Optional[str]               = None
-    llm_model:                 Optional[str]               = None
-    llm_api_key:               Optional[str]               = None
-    llm_temperature:           Optional[float]             = Field(None, ge=0.0, le=1.0)
-    llm_max_tokens:            Optional[int]               = Field(None, ge=500, le=4000)
-
     enable_pii_detection:      Optional[bool]              = None
     enable_bias_detection:     Optional[bool]              = None
     theme:                     Optional[Literal["dark", "light", "system"]] = None
     notifications_enabled:     Optional[bool]              = None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LLM REGISTRY (Discovery)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class LLMProviderInfo(NydraBase):
-    name:         str
-    format:       str
-    requires_key: bool
-    key_hint:     str
-    free_tier:    bool
-    models:       List[str]
-    recommended:  str
-    notes:        str
-
-
-class LLMRegistryResponse(NydraBase):
-    providers:    Dict[str, LLMProviderInfo]
-    all_keys:     List[str]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1162,7 +1124,7 @@ __all__ = [
     "ImputationMethod", "AutoMLTask", "ReportFormat", "WSEventType",
     "ColumnType", "Verdict", "ErrorCode", "ChatRole", "ServiceStatus",
     # Auth
-    "UserRegister", "UserLogin", "OAuthCodeExchange", "UserPublic", "TokenResponse",
+    "UserRegister", "UserLogin", "UserPublic", "TokenResponse",
     "TokenRefresh", "APIKeyCreate", "APIKeyPublic", "APIKeyFull",
     # Settings
     "UserSettings", "UserSettingsUpdate",
