@@ -245,6 +245,10 @@ class UserSettings(NydraBase):
     theme:                     Literal["dark", "light", "system"] = "dark"
     language:                  str             = Field("en", pattern=r"^[a-z]{2}$")
     notifications_enabled:     bool            = True
+    llm_provider:      Optional[str] = None
+    llm_model:         Optional[str] = None
+    llm_api_key_masked: Optional[str] = None
+    llm_custom_base_url: Optional[str] = None
 
 
 class UserSettingsUpdate(NydraBase):
@@ -258,6 +262,21 @@ class UserSettingsUpdate(NydraBase):
     enable_bias_detection:     Optional[bool]              = None
     theme:                     Optional[Literal["dark", "light", "system"]] = None
     notifications_enabled:     Optional[bool]              = None
+    llm_provider:        Optional[str] = None
+    llm_model:           Optional[str] = None
+    llm_api_key:         Optional[str] = Field(None, description="RAW plaintext key — encrypted before storage, never echoed back")
+    llm_custom_base_url: Optional[str] = None
+
+class LLMProviderInfo(NydraBase):
+    id:          str
+    name:        str
+    models:      List[str]
+    recommended: str
+    requires_base_url: bool = False
+
+
+class LLMProvidersResponse(NydraBase):
+    providers: Dict[str, LLMProviderInfo]    
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1127,7 +1146,8 @@ __all__ = [
     "UserRegister", "UserLogin", "UserPublic", "TokenResponse",
     "TokenRefresh", "APIKeyCreate", "APIKeyPublic", "APIKeyFull",
     # Settings
-    "UserSettings", "UserSettingsUpdate",
+        # Settings
+    "UserSettings", "UserSettingsUpdate", "LLMProviderInfo", "LLMProvidersResponse",
     # Upload
     "UploadedFileInfo", "UploadResponse", "MultiUploadResponse",
     # Requests

@@ -10,6 +10,15 @@ import { Layout, Database, Activity, MessageSquare, Settings, LogOut, ChevronRig
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+function getTokenExpiry(jwt: string): number | null {
+  try {
+    const payload = JSON.parse(atob(jwt.split(".")[1]));
+    return payload.exp ? payload.exp * 1000 : null; // ms since epoch
+  } catch {
+    return null;
+  }
+}
+
 type AppState = "IDLE" | "PROCESSING" | "RESULTS";
 type Workspace = "DIAGNOSTICS" | "VISION_LAB" | "TEXT_INTELLIGENCE" | "REPAIR_SHOP";
 
@@ -42,6 +51,23 @@ export default function NydraApp() {
       fetchMetadata(savedToken);
     }
   }, []);
+
+  // Proactively refresh the access token before it expires
+useEffect(() => {
+  if (!token) return;
+
+  const expiryMs = getTokenExpiry(token);
+  if (!expiryMs) return;
+
+  const refreshInMs = expiryMs - Date.now() - 5 * 60 * 1000; // 5 min before expiry
+  const delay = Math.max(refreshInMs, 0);
+
+  const timer = setTimeout(() => {
+    refreshAccessToken();
+  }, delay);
+
+  return () => clearTimeout(timer);
+}, [token, refreshToken, customApiUrl]);
 
   const fetchMetadata = async (t: string) => {
     try {
@@ -82,6 +108,31 @@ export default function NydraApp() {
     setSettings(null);
     setRegistry(null);
   };
+
+  const refreshAccessToken = async (): Promise<string | null> => {
+  const currentRefresh = refreshToken || sessionStorage.getItem("nydra_refresh");
+  if (!currentRefresh) return null;
+
+  try {
+    const res = await axios.post(`${customApiUrl}/api/v1/auth/refresh`, {
+      refresh_token: currentRefresh,
+    });
+    const newAccess = res.data.access_token;
+    const newRefresh = res.data.refresh_token;
+
+    setToken(newAccess);
+    sessionStorage.setItem("nydra_token", newAccess);
+    if (newRefresh) {
+      setRefreshToken(newRefresh);
+      sessionStorage.setItem("nydra_refresh", newRefresh);
+    }
+    return newAccess;
+  } catch (err) {
+    console.error("Token refresh failed, logging out", err);
+    handleLogout();
+    return null;
+  }
+};
 
   const handleSaveSettings = async (updates: any) => {
     if (updates.apiUrl) {

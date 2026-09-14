@@ -32,6 +32,8 @@ import time
 import traceback
 import uuid
 import httpx
+
+from src.security_vault import get_vault as get_security_vault
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -130,6 +132,8 @@ from src.api_schemas import (
     UserRegister,
     UserSettings,
     UserSettingsUpdate,
+    LLMProviderInfo,
+    LLMProvidersResponse,
     ValidationErrorResponse,
     Verdict,
     WSErrorPayload,
@@ -175,6 +179,67 @@ GOOGLE_TOKEN_URL     = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL  = "https://www.googleapis.com/oauth2/v3/userinfo"
 OAUTH_STATE_EXPIRE_MIN = 10  # state token is short-lived, just covers the popup round trip
 
+_vault = get_security_vault()
+ 
+LLM_PROVIDER_REGISTRY: Dict[str, Dict[str, Any]] = {
+        "groq": {
+            "name": "Groq",
+            "base_url": "https://api.groq.com/openai/v1",
+            "models": [
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "gemma2-9b-it",
+            ],
+            "recommended": "llama-3.3-70b-versatile",
+            "requires_base_url": False,
+            "style": "openai",
+        },
+        "openai": {
+            "name": "OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-mini"],
+            "recommended": "gpt-4o-mini",
+            "requires_base_url": False,
+            "style": "openai",
+        },
+        "anthropic": {
+            "name": "Anthropic",
+            "base_url": "https://api.anthropic.com/v1",
+            "models": [
+                "claude-sonnet-4-5-20250929",
+                "claude-opus-4-1-20250805",
+                "claude-3-5-haiku-20241022",
+            ],
+            "recommended": "claude-sonnet-4-5-20250929",
+            "requires_base_url": False,
+            "style": "anthropic",
+        },
+        "google": {
+            "name": "Google Gemini",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            "models": ["gemini-3.6-flash"],
+            "recommended": "gemini-3.6-flash",
+            "requires_base_url": False,
+            "style": "google",
+        },
+        "openrouter": {
+            "name": "OpenRouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "models": ["openai/gpt-4o", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"],
+            "recommended": "openai/gpt-4o-mini",
+            "requires_base_url": False,
+            "style": "openai",
+        },
+        "custom": {
+            "name": "Custom (OpenAI-compatible)",
+            "base_url": "",
+            "models": [],
+            "recommended": "",
+            "requires_base_url": True,
+            "style": "openai",
+        },
+    }
 
 
 
@@ -1654,6 +1719,21 @@ async def revoke_api_key(
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — User / Settings
 # ─────────────────────────────────────────────────────────────────────────────
+@app.get("/api/v1/config/llm/providers", response_model=LLMProvidersResponse, tags=["Config"])
+async def list_llm_providers():
+    """Return the registry of supported LLM providers and their models."""
+    providers = {
+        key: LLMProviderInfo(
+            id=key,
+            name=cfg["name"],
+            models=cfg["models"],
+            recommended=cfg["recommended"],
+            requires_base_url=cfg["requires_base_url"],
+        )
+        for key, cfg in LLM_PROVIDER_REGISTRY.items()
+    }
+    return LLMProvidersResponse(providers=providers)
+
 @app.get("/api/v1/me", response_model=UserPublic, tags=["User"])
 async def get_me(current_user: DBUser = Depends(get_current_user)):
     return UserPublic(
@@ -1664,14 +1744,23 @@ async def get_me(current_user: DBUser = Depends(get_current_user)):
         is_active=current_user.is_active,
     )
 
-
 @app.get("/api/v1/me/settings", response_model=UserSettings, tags=["User"])
 async def get_settings(current_user: DBUser = Depends(get_current_user)):
     settings = current_user.settings or {}
     try:
-        return UserSettings(**settings)
+        user_settings = UserSettings(**{k: v for k, v in settings.items() if k != "llm_api_key_encrypted"})
     except Exception:
-        return UserSettings()
+        user_settings = UserSettings()
+
+    encrypted_key = settings.get("llm_api_key_encrypted")
+    if encrypted_key:
+        try:
+            plaintext = _vault.decrypt(encrypted_key)
+            user_settings.llm_api_key_masked = _vault.mask(plaintext)
+        except Exception:
+            user_settings.llm_api_key_masked = None
+
+    return user_settings
 
 
 @app.patch("/api/v1/me/settings", response_model=UserSettings, tags=["User"])
@@ -1682,10 +1771,32 @@ async def update_settings(
 ):
     current = current_user.settings or {}
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+
+    raw_key = updates.pop("llm_api_key", None)
+    if raw_key:
+        current["llm_api_key_encrypted"] = _vault.encrypt(raw_key)
+        if not updates.get("llm_provider"):
+            detected = _vault.detect_provider(raw_key)
+            if detected:
+                updates["llm_provider"] = detected
+
     current.update(updates)
     await db.execute(update(DBUser).where(DBUser.id == current_user.id).values(settings=current))
     await db.commit()
-    return UserSettings(**current)
+
+    try:
+        result = UserSettings(**{k: v for k, v in current.items() if k != "llm_api_key_encrypted"})
+    except Exception:
+        # Stale/out-of-range values from before a schema tightening (e.g. old max_file_size_mb)
+        safe_current = {k: v for k, v in current.items() if k != "llm_api_key_encrypted"}
+        safe_current.pop("max_file_size_mb", None)
+        result = UserSettings(**safe_current)
+    if current.get("llm_api_key_encrypted"):
+        try:
+            result.llm_api_key_masked = _vault.mask(_vault.decrypt(current["llm_api_key_encrypted"]))
+        except Exception:
+            pass
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2157,6 +2268,161 @@ def _write_pdf(data: Dict, path: Path) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — AI Chat
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────
+# LLM Call Helpers — provider-agnostic, driven entirely by each user's own
+# saved provider/model/key. No hardcoded provider or key anywhere.
+# ─────────────────────────────────────────────────────────────────────────
+
+class LLMConfigError(Exception):
+    """Raised when a user has no valid LLM provider/key configured."""
+
+
+def _get_user_llm_config(user: Optional[DBUser]) -> Dict[str, Any]:
+    if not user:
+        raise LLMConfigError("Could not identify the current user.")
+
+    settings = user.settings or {}
+    provider = settings.get("llm_provider")
+    encrypted_key = settings.get("llm_api_key_encrypted")
+
+    if not provider or not encrypted_key:
+        raise LLMConfigError("No LLM provider configured. Please add an API key in Settings.")
+
+    registry_entry = LLM_PROVIDER_REGISTRY.get(provider)
+    if not registry_entry:
+        raise LLMConfigError(f"Unknown provider '{provider}'.")
+
+    try:
+        api_key = _vault.decrypt(encrypted_key)
+    except Exception:
+        raise LLMConfigError("Stored API key could not be decrypted. Please re-enter it in Settings.")
+
+    custom_base = settings.get("llm_custom_base_url")
+    if registry_entry.get("requires_base_url") and not custom_base:
+        raise LLMConfigError("This provider requires a custom base URL. Please set it in Settings.")
+    base_url = custom_base or registry_entry["base_url"]
+
+    model = settings.get("llm_model") or registry_entry.get("recommended")
+    if not model:
+        raise LLMConfigError("No model selected. Please choose a model in Settings.")
+
+    return {
+        "provider": provider,
+        "style": registry_entry["style"],
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+    }
+
+
+def _to_provider_messages(messages: List[ChatMessage], system_prompt: str, style: str):
+    if style == "openai":
+        out = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            role = "assistant" if m.role == ChatRole.ASSISTANT else ("system" if m.role == ChatRole.SYSTEM else "user")
+            out.append({"role": role, "content": m.content})
+        return out
+    elif style == "anthropic":
+        return [
+            {"role": "assistant" if m.role == ChatRole.ASSISTANT else "user", "content": m.content}
+            for m in messages if m.role != ChatRole.SYSTEM
+        ]
+    elif style == "google":
+        return [
+            {"role": "model" if m.role == ChatRole.ASSISTANT else "user", "parts": [{"text": m.content}]}
+            for m in messages if m.role != ChatRole.SYSTEM
+        ]
+    raise LLMConfigError(f"Unsupported provider style '{style}'.")
+
+
+async def _call_llm_non_streaming(cfg: Dict[str, Any], messages: List[ChatMessage], system_prompt: str, max_tokens: int) -> str:
+    style = cfg["style"]
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        if style == "openai":
+            resp = await client.post(
+                f"{cfg['base_url']}/chat/completions",
+                headers={"Authorization": f"Bearer {cfg['api_key']}"},
+                json={
+                    "model": cfg["model"],
+                    "messages": _to_provider_messages(messages, system_prompt, style),
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+
+        elif style == "anthropic":
+            resp = await client.post(
+                f"{cfg['base_url']}/messages",
+                headers={
+                    "x-api-key": cfg["api_key"],
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": cfg["model"],
+                    "system": system_prompt,
+                    "messages": _to_provider_messages(messages, system_prompt, style),
+                    "max_tokens": max_tokens,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return "".join(block.get("text", "") for block in data.get("content", []))
+
+        elif style == "google":
+            resp = await client.post(
+                f"{cfg['base_url']}/models/{cfg['model']}:generateContent?key={cfg['api_key']}",
+                json={
+                    "contents": _to_provider_messages(messages, system_prompt, style),
+                    "systemInstruction": {"parts": [{"text": system_prompt}]},
+                    "generationConfig": {"maxOutputTokens": max_tokens},
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+
+        raise LLMConfigError(f"Unsupported provider style '{style}'.")
+
+
+async def _stream_llm(cfg: Dict[str, Any], messages: List[ChatMessage], system_prompt: str, max_tokens: int):
+    """Yields text chunks. True token streaming for OpenAI-style providers
+    (Groq/OpenAI/OpenRouter/Custom); Anthropic/Google are fetched in full
+    then chunked word-by-word to preserve the streaming UX for now."""
+    style = cfg["style"]
+    if style == "openai":
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                f"{cfg['base_url']}/chat/completions",
+                headers={"Authorization": f"Bearer {cfg['api_key']}"},
+                json={
+                    "model": cfg["model"],
+                    "messages": _to_provider_messages(messages, system_prompt, style),
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                },
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload = line[len("data: "):]
+                    if payload.strip() == "[DONE]":
+                        break
+                    try:
+                        delta = json.loads(payload)["choices"][0]["delta"].get("content")
+                        if delta:
+                            yield delta
+                    except Exception:
+                        continue
+    else:
+        full_text = await _call_llm_non_streaming(cfg, messages, system_prompt, max_tokens)
+        for word in full_text.split(" "):
+            yield word + " "
+
 @app.post("/api/v1/chat", response_model=ChatResponse, tags=["Chat"])
 async def chat(
     body: ChatRequest,
@@ -2176,7 +2442,6 @@ async def chat(
             context = f"\n\nContext from analysis (job {body.job_id[:8]}):\n{json.dumps(job.result_data, indent=2)[:4000]}"
             used_context = True
 
-    # Build messages for agent
     system_prompt = (
         "You are Nydra, an autonomous data intelligence assistant. "
         "You help users understand their dataset analysis results, "
@@ -2186,16 +2451,19 @@ async def chat(
     )
 
     try:
-        from src.core.agent import DataDoctor  # noqa: PLC0415
-        # Use agent's AI suggestion capability
-        # This is a stub — wire to your LLM of choice
-        reply_text = f"I analyzed your request. {system_prompt[:100]}..."
-    except ImportError:
-        reply_text = "I'm ready to help with your data analysis. What would you like to know?"
+        cfg = _get_user_llm_config(current_user)
+        reply_text = await _call_llm_non_streaming(cfg, body.messages, system_prompt, body.max_tokens)
+    except LLMConfigError as e:
+        reply_text = f"⚠️ {e}"
+    except httpx.HTTPStatusError as e:
+        log.error("LLM provider error: %s", e)
+        reply_text = f"⚠️ The AI provider returned an error ({e.response.status_code}). Check your API key and model in Settings."
+    except Exception as e:
+        log.error("LLM call failed: %s", e)
+        reply_text = "⚠️ Something went wrong contacting the AI provider. Please try again."
 
     reply = ChatMessage(role=ChatRole.ASSISTANT, content=reply_text)
     return ChatResponse(message=reply, job_id=body.job_id, used_context=used_context, tokens_used=len(reply_text))
-
 
 @app.websocket("/api/v1/ws/chat")
 async def websocket_chat(
@@ -2211,26 +2479,53 @@ async def websocket_chat(
         await websocket.close(code=4001, reason="Missing token")
         return
     try:
-        decode_access_token(token)
+        payload = decode_access_token(token)
     except HTTPException:
         await websocket.close(code=4001, reason="Invalid token")
         return
 
+    user_id = payload.get("sub")
     await websocket.accept()
+
     try:
         while True:
-            data    = await websocket.receive_text()
-            payload = json.loads(data)
-            message = payload.get("message", "")
+            data = await websocket.receive_text()
+            msg_payload = json.loads(data)
+            message = msg_payload.get("message", "")
+            job_id  = msg_payload.get("job_id")
             if not message:
                 continue
 
-            # Stream simulated response (wire to actual LLM stream here)
-            words = f"I understand you're asking about: {message}. Let me analyze this for you.".split()
-            for word in words:
-                await websocket.send_text(json.dumps({"token": word + " "}))
-                await asyncio.sleep(0.05)
-            await websocket.send_text(json.dumps({"done": True}))
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(DBUser).where(DBUser.id == user_id))
+                user = result.scalar_one_or_none()
+
+                context = ""
+                if job_id and user:
+                    jr = await db.execute(select(DBJob).where(DBJob.id == job_id, DBJob.user_id == user.id))
+                    job = jr.scalar_one_or_none()
+                    if job and job.result_data:
+                        context = f"\n\nContext from analysis (job {job_id[:8]}):\n{json.dumps(job.result_data, indent=2)[:4000]}"
+
+            system_prompt = (
+                "You are Nydra, an autonomous data intelligence assistant. "
+                "You help users understand their dataset analysis results, "
+                "suggest data cleaning strategies, explain ML concepts, "
+                "and guide users toward better data quality."
+                + context
+            )
+
+            try:
+                cfg = _get_user_llm_config(user)
+                history = [ChatMessage(role=ChatRole.USER, content=message)]
+                async for chunk in _stream_llm(cfg, history, system_prompt, max_tokens=1000):
+                    await websocket.send_text(json.dumps({"token": chunk}))
+                await websocket.send_text(json.dumps({"done": True}))
+            except LLMConfigError as e:
+                await websocket.send_text(json.dumps({"error": str(e)}))
+            except Exception as e:
+                log.error("WS LLM call failed: %s", e)
+                await websocket.send_text(json.dumps({"error": "Something went wrong contacting the AI provider."}))
 
     except WebSocketDisconnect:
         pass

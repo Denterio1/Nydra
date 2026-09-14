@@ -1,5 +1,5 @@
 """
-security_vault.py — dataDoctor Security Vault v1.0
+security_vault.py — Nydra Security Vault v1.0
 ====================================================
 Enterprise-grade encryption, hashing, key management,
 and secrets protection for user data privacy.

@@ -32,7 +32,7 @@ debug_test.db
 git_status_full.txt
 
 # ── Large binary datasets (don't bloat repo history) ──
-examples/cat-and-dog/
+examples/
 mnist-dataset.zip
 
 # ── IDE (in case something slips through despite .idea/ above) ──
@@ -42,3 +42,7 @@ mnist-dataset.zip
 
 # VS Code
 .vscode/
+
+# Python bytecode
+__pycache__/
+*.pyc
