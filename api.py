@@ -186,12 +186,14 @@ LLM_PROVIDER_REGISTRY: Dict[str, Dict[str, Any]] = {
             "name": "Groq",
             "base_url": "https://api.groq.com/openai/v1",
             "models": [
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768",
-                "gemma2-9b-it",
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b",
+                "openai/gpt-oss-safeguard-20b",
+                "qwen/qwen3.8-27b",
+                "groq/compound",
+                "groq/compound-mini",
             ],
-            "recommended": "llama-3.3-70b-versatile",
+            "recommended": "openai/gpt-oss-120b",
             "requires_base_url": False,
             "style": "openai",
         },
@@ -226,10 +228,50 @@ LLM_PROVIDER_REGISTRY: Dict[str, Dict[str, Any]] = {
         "openrouter": {
             "name": "OpenRouter",
             "base_url": "https://openrouter.ai/api/v1",
-            "models": ["openai/gpt-4o", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct"],
+            "models": ["openai/gpt-4o", "anthropic/claude-sonnet-4.5", "meta-llama/llama-3.3-70b-instruct", "nvidia/nemotron-3-super-120b-a12b:free"],
             "recommended": "openai/gpt-4o-mini",
             "requires_base_url": False,
             "style": "openai",
+        },
+        "mistral": {
+            "name": "Mistral AI",
+            "base_url": "https://api.mistral.ai/v1",
+            "models": ["open-mistral-nemo", "mistral-large-latest", "mistral-small-latest", "codestral-latest"],
+            "recommended": "open-mistral-nemo",
+            "requires_base_url": False,
+            "style": "openai",
+        },
+        "deepseek": {
+            "name": "DeepSeek",
+            "base_url": "https://api.deepseek.com",
+            "models": ["deepseek-v4-flash", "deepseek-v4-pro"],
+            "recommended": "deepseek-v4-flash",
+            "requires_base_url": False,
+            "style": "openai",
+        },
+        "cerebras": {
+            "name": "Cerebras",
+            "base_url": "https://api.cerebras.ai/v1",
+            "models": ["llama-3.3-70b", "llama3.1-8b"],
+            "recommended": "llama-3.3-70b",
+            "requires_base_url": False,
+            "style": "openai",
+        },
+        "together": {
+            "name": "Together AI",
+            "base_url": "https://api.together.xyz/v1",
+            "models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "deepseek-ai/DeepSeek-V3"],
+            "recommended": "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+            "requires_base_url": False,
+            "style": "openai",
+        },
+        "cohere": {
+            "name": "Cohere",
+            "base_url": "https://api.cohere.com/v2",
+            "models": ["command-r-plus-08-2024", "command-r-08-2024"],
+            "recommended": "command-r-08-2024",
+            "requires_base_url": False,
+            "style": "cohere",
         },
         "custom": {
             "name": "Custom (OpenAI-compatible)",
@@ -1734,6 +1776,48 @@ async def list_llm_providers():
     }
     return LLMProvidersResponse(providers=providers)
 
+@app.get("/api/v1/config/llm/models", tags=["Config"])
+async def list_provider_models(
+    provider: str = Query(...),
+    api_key: Optional[str] = Query(None),
+    base_url: Optional[str] = Query(None),
+    current_user: DBUser = Depends(get_current_user),
+):
+    """Fetch a provider's real current models live, using a passed-in key
+    (to preview before saving) or the user's already-saved key."""
+    registry_entry = LLM_PROVIDER_REGISTRY.get(provider)
+    if not registry_entry:
+        raise HTTPException(status_code=404, detail=f"Unknown provider '{provider}'.")
+
+    style = registry_entry["style"]
+    effective_base_url = base_url or registry_entry["base_url"]
+
+    effective_key = api_key
+    if not effective_key:
+        settings = current_user.settings or {}
+        if settings.get("llm_provider") == provider and settings.get("llm_api_key_encrypted"):
+            try:
+                effective_key = _vault.decrypt(settings["llm_api_key_encrypted"])
+            except Exception:
+                pass
+
+    if not effective_key:
+        raise HTTPException(status_code=400, detail="No API key available. Pass one or save it in Settings first.")
+    if registry_entry.get("requires_base_url") and not effective_base_url:
+        raise HTTPException(status_code=400, detail="This provider requires a base_url.")
+
+    try:
+        model_ids = await _fetch_live_models(style, effective_base_url, effective_key)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Provider returned an error: {e.response.status_code}")
+    except LLMConfigError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch models: {e}")
+
+    return {"provider": provider, "models": model_ids}
+
+
 @app.get("/api/v1/me", response_model=UserPublic, tags=["User"])
 async def get_me(current_user: DBUser = Depends(get_current_user)):
     return UserPublic(
@@ -2062,6 +2146,73 @@ async def cancel_job(
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — WebSocket
 # ─────────────────────────────────────────────────────────────────────────────
+@app.websocket("/api/v1/ws/chat")
+async def websocket_chat(
+    websocket: WebSocket,
+    token: Optional[str] = Query(None),
+):
+    """
+    Streaming AI chat over WebSocket.
+    Client sends: {"message": "...", "job_id": "optional"}
+    Server streams: {"token": "..."} chunks, then {"done": true}
+    """
+    print(f"!!! WS CHAT ENTERED, token_len={len(token) if token else 0}", flush=True)
+    if not token:
+        await websocket.close(code=4001, reason="Missing token")
+        return
+    try:
+        payload = decode_access_token(token)
+    except HTTPException as e:
+        logger.warning(f"WS chat auth rejected: {e.detail}")
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
+    user_id = payload.get("sub")
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            msg_payload = json.loads(data)
+            message = msg_payload.get("message", "")
+            job_id  = msg_payload.get("job_id")
+            if not message:
+                continue
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(DBUser).where(DBUser.id == user_id))
+                user = result.scalar_one_or_none()
+
+                context = ""
+                if job_id and user:
+                    jr = await db.execute(select(DBJob).where(DBJob.id == job_id, DBJob.user_id == user.id))
+                    job = jr.scalar_one_or_none()
+                    if job and job.result_data:
+                        context = f"\n\nContext from analysis (job {job_id[:8]}):\n{json.dumps(job.result_data, indent=2)[:4000]}"
+
+            system_prompt = (
+                "You are Nydra, an autonomous data intelligence assistant. "
+                "You help users understand their dataset analysis results, "
+                "suggest data cleaning strategies, explain ML concepts, "
+                "and guide users toward better data quality."
+                + context
+            )
+
+            try:
+                cfg = _get_user_llm_config(user)
+                history = [ChatMessage(role=ChatRole.USER, content=message)]
+                async for chunk in _stream_llm(cfg, history, system_prompt, max_tokens=1000):
+                    await websocket.send_text(json.dumps({"token": chunk}))
+                await websocket.send_text(json.dumps({"done": True}))
+            except LLMConfigError as e:
+                await websocket.send_text(json.dumps({"error": str(e)}))
+            except Exception as e:
+                log.error("WS LLM call failed: %s", e)
+                await websocket.send_text(json.dumps({"error": "Something went wrong contacting the AI provider."}))
+
+    except WebSocketDisconnect:
+        pass
+
 @app.websocket("/api/v1/ws/{job_id}")
 async def websocket_job_progress(
     websocket: WebSocket,
@@ -2275,6 +2426,48 @@ def _write_pdf(data: Dict, path: Path) -> None:
 
 class LLMConfigError(Exception):
     """Raised when a user has no valid LLM provider/key configured."""
+_NON_CHAT_MODEL_HINTS = (
+    "whisper", "dall-e", "dalle", "embedding", "moderation",
+    "tts", "transcribe", "audio", "image", "realtime", "guard",
+    "safety", "safeguard", "rerank",
+)
+
+
+async def _fetch_live_models(style: str, base_url: str, api_key: str) -> List[str]:
+    """Fetch a provider's real current model list live, using the caller's own key."""
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        if style == "openai":
+            resp = await client.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
+            resp.raise_for_status()
+            ids = [m["id"] for m in resp.json().get("data", [])]
+
+        elif style == "anthropic":
+            resp = await client.get(
+                f"{base_url}/models",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+            )
+            resp.raise_for_status()
+            ids = [m["id"] for m in resp.json().get("data", [])]
+
+        elif style == "google":
+            resp = await client.get(f"{base_url}/models?key={api_key}")
+            resp.raise_for_status()
+            ids = [
+                m["name"].split("/")[-1]
+                for m in resp.json().get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])
+            ]
+
+        elif style == "cohere":
+            resp = await client.get("https://api.cohere.com/v1/models", headers={"Authorization": f"Bearer {api_key}"})
+            resp.raise_for_status()
+            ids = [m["name"] for m in resp.json().get("models", []) if "chat" in m.get("endpoints", [])]
+
+        else:
+            raise LLMConfigError(f"Live model fetch not supported for style '{style}'.")
+
+    filtered = [mid for mid in ids if not any(hint in mid.lower() for hint in _NON_CHAT_MODEL_HINTS)]
+    return sorted(filtered)
 
 
 def _get_user_llm_config(user: Optional[DBUser]) -> Dict[str, Any]:
@@ -2325,6 +2518,11 @@ def _to_provider_messages(messages: List[ChatMessage], system_prompt: str, style
     elif style == "anthropic":
         return [
             {"role": "assistant" if m.role == ChatRole.ASSISTANT else "user", "content": m.content}
+            for m in messages if m.role != ChatRole.SYSTEM
+        ]
+    elif style == "cohere":
+        return [
+            {"role": "CHATBOT" if m.role == ChatRole.ASSISTANT else "USER", "content": m.content}
             for m in messages if m.role != ChatRole.SYSTEM
         ]
     elif style == "google":
@@ -2383,6 +2581,22 @@ async def _call_llm_non_streaming(cfg: Dict[str, Any], messages: List[ChatMessag
             resp.raise_for_status()
             data = resp.json()
             return data["candidates"][0]["content"]["parts"][0]["text"]
+        elif style == "cohere":
+            resp = await client.post(
+                f"{cfg['base_url']}/chat",
+                headers={
+                    "Authorization": f"Bearer {cfg['api_key']}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": cfg["model"],
+                    "messages": _to_provider_messages(messages, system_prompt, style),
+                    "max_tokens": max_tokens,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return "".join(block.get("text", "") for block in data.get("message", {}).get("content", []))
 
         raise LLMConfigError(f"Unsupported provider style '{style}'.")
 
@@ -2464,72 +2678,6 @@ async def chat(
 
     reply = ChatMessage(role=ChatRole.ASSISTANT, content=reply_text)
     return ChatResponse(message=reply, job_id=body.job_id, used_context=used_context, tokens_used=len(reply_text))
-
-@app.websocket("/api/v1/ws/chat")
-async def websocket_chat(
-    websocket: WebSocket,
-    token: Optional[str] = Query(None),
-):
-    """
-    Streaming AI chat over WebSocket.
-    Client sends: {"message": "...", "job_id": "optional"}
-    Server streams: {"token": "..."} chunks, then {"done": true}
-    """
-    if not token:
-        await websocket.close(code=4001, reason="Missing token")
-        return
-    try:
-        payload = decode_access_token(token)
-    except HTTPException:
-        await websocket.close(code=4001, reason="Invalid token")
-        return
-
-    user_id = payload.get("sub")
-    await websocket.accept()
-
-    try:
-        while True:
-            data = await websocket.receive_text()
-            msg_payload = json.loads(data)
-            message = msg_payload.get("message", "")
-            job_id  = msg_payload.get("job_id")
-            if not message:
-                continue
-
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(select(DBUser).where(DBUser.id == user_id))
-                user = result.scalar_one_or_none()
-
-                context = ""
-                if job_id and user:
-                    jr = await db.execute(select(DBJob).where(DBJob.id == job_id, DBJob.user_id == user.id))
-                    job = jr.scalar_one_or_none()
-                    if job and job.result_data:
-                        context = f"\n\nContext from analysis (job {job_id[:8]}):\n{json.dumps(job.result_data, indent=2)[:4000]}"
-
-            system_prompt = (
-                "You are Nydra, an autonomous data intelligence assistant. "
-                "You help users understand their dataset analysis results, "
-                "suggest data cleaning strategies, explain ML concepts, "
-                "and guide users toward better data quality."
-                + context
-            )
-
-            try:
-                cfg = _get_user_llm_config(user)
-                history = [ChatMessage(role=ChatRole.USER, content=message)]
-                async for chunk in _stream_llm(cfg, history, system_prompt, max_tokens=1000):
-                    await websocket.send_text(json.dumps({"token": chunk}))
-                await websocket.send_text(json.dumps({"done": True}))
-            except LLMConfigError as e:
-                await websocket.send_text(json.dumps({"error": str(e)}))
-            except Exception as e:
-                log.error("WS LLM call failed: %s", e)
-                await websocket.send_text(json.dumps({"error": "Something went wrong contacting the AI provider."}))
-
-    except WebSocketDisconnect:
-        pass
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — System & Health
