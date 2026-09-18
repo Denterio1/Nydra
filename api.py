@@ -2156,7 +2156,6 @@ async def websocket_chat(
     Client sends: {"message": "...", "job_id": "optional"}
     Server streams: {"token": "..."} chunks, then {"done": true}
     """
-    print(f"!!! WS CHAT ENTERED, token_len={len(token) if token else 0}", flush=True)
     if not token:
         await websocket.close(code=4001, reason="Missing token")
         return
@@ -2429,7 +2428,7 @@ class LLMConfigError(Exception):
 _NON_CHAT_MODEL_HINTS = (
     "whisper", "dall-e", "dalle", "embedding", "moderation",
     "tts", "transcribe", "audio", "image", "realtime", "guard",
-    "safety", "safeguard", "rerank",
+    "safety", "safeguard", "rerank", "orpheus"
 )
 
 

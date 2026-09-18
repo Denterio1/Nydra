@@ -30,6 +30,9 @@ export default function NydraApp() {
   const [goal, setGoal] = useState<string>("inspect");
   const [filename, setFilename] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [selectedProvider, setSelectedProvider] = useState<string>("groq");
+  const [liveModels, setLiveModels] = useState<string[] | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeSettingsTab, setActiveSettingsTab] = useState("api");
   const [customApiUrl, setCustomApiUrl] = useState(API_URL);
@@ -335,6 +338,8 @@ useEffect(() => {
                             defaultValue={settings?.llm_provider || "groq"}
                             onChange={(e) => {
                               const p = e.target.value;
+                              setSelectedProvider(p);
+                              setLiveModels(null);
                               const modelSelect = document.getElementById("settings-llm-model") as HTMLSelectElement;
                               if (modelSelect && registry?.providers[p]) {
                                 modelSelect.value = registry.providers[p].recommended;
@@ -346,6 +351,30 @@ useEffect(() => {
                               <option key={id} value={id}>{info.name}</option>
                             )) : <option>Loading...</option>}
                           </select>
+                          <button
+                            type="button"
+                            disabled={fetchingModels}
+                            onClick={async () => {
+                              const key = (document.getElementById("settings-llm-key") as HTMLInputElement)?.value;
+                              setFetchingModels(true);
+                              try {
+                                const params: any = { provider: selectedProvider };
+                                if (key) params.api_key = key;
+                                const res = await axios.get(`${customApiUrl}/api/v1/config/llm/models`, {
+                                  params,
+                                  headers: { Authorization: `Bearer ${token}` },
+                                });
+                                setLiveModels(res.data.models);
+                              } catch (err) {
+                                console.error("Live model fetch failed:", err);
+                              } finally {
+                                setFetchingModels(false);
+                              }
+                            }}
+                            className="mt-2 text-[9px] font-mono text-[#c8f06e]/60 hover:text-[#c8f06e] uppercase tracking-widest"
+                          >
+                            {fetchingModels ? "Fetching..." : "↻ Fetch Live Models"}
+                          </button>
                         </div>
 
                         <div>
@@ -356,12 +385,14 @@ useEffect(() => {
                             id="settings-llm-model"
                             defaultValue={settings?.llm_model}
                             className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-3 text-sm text-[#c8f06e]/80 focus:outline-none focus:border-[#c8f06e]/50 transition-all appearance-none cursor-pointer"
-                          >
-                            {registry && Object.values(registry.providers).map((p: any) => 
-                              p.models.map((m: string) => (
-                                <option key={m} value={m}>{m}</option>
-                              ))
-                            )}
+                                                    >
+                            {liveModels
+                              ? liveModels.map((m: string) => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))
+                              : registry?.providers[selectedProvider]?.models.map((m: string) => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
                           </select>
                         </div>
                       </div>

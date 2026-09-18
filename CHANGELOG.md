@@ -47,3 +47,29 @@ verified 196-test suite.
   yet supported (separate from Google OAuth, which does use email)
 - Some pre-existing deprecation warnings remain (Pydantic `json_encoders`,
   pandas `select_dtypes`) — tracked for a future cleanup pass
+
+ ## [1.2.0] - 2026-09-18
+
+### Fixed
+- WebSocket `/ws/chat` 403 — root cause was route registration order; specific routes
+  must be registered before wildcard/path-param routes (`/ws/{job_id}` was shadowing
+  `/ws/chat`). Moved `websocket_chat` before `websocket_job_progress`.
+- Live-verified Groq (`openai/gpt-oss-120b`) and OpenRouter
+  (`nvidia/nemotron-3-super-120b-a12b:free`) model entries via real completions.
+- Removed stray artifact file from project root left over from a terminal copy-paste
+  mishap.
+
+### Added
+- `GET /api/v1/config/llm/models?provider=X` — live model-fetching route, resolves
+  provider model names directly from each provider's real API instead of a static
+  hardcoded list.
+- 5 new LLM providers: Mistral, DeepSeek, Cerebras, Together AI, Cohere (Cohere ships
+  its own non-OpenAI-compatible message-shape adapter).
+- Frontend: "Fetch Live Models" button, model dropdown now scoped to the selected
+  provider instead of flattening every provider's models together.
+
+### Known gaps (unverified, tracked for follow-up)
+- Mistral, DeepSeek, Cerebras, Together AI: registry entries added from docs only,
+  not yet confirmed with a live API call.
+- Cohere: provider added, adapter code untested end-to-end.
+- OpenAI, Anthropic: registry model names likely stale, blocked on a paid key. 
