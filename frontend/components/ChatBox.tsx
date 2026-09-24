@@ -664,8 +664,11 @@ export default function ChatBox({
 
     // Use WS if connected, otherwise REST
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        message: trimmed,
+            wsRef.current.send(JSON.stringify({
+                messages: updatedHistory.slice(-20).map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
         job_id: jobId ?? null,
       }));
     } else {

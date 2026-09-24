@@ -2173,9 +2173,19 @@ async def websocket_chat(
         while True:
             data = await websocket.receive_text()
             msg_payload = json.loads(data)
-            message = msg_payload.get("message", "")
-            job_id  = msg_payload.get("job_id")
-            if not message:
+            job_id = msg_payload.get("job_id")
+
+            messages_in = msg_payload.get("messages")
+            if messages_in:
+                history = [
+                    ChatMessage(role=ChatRole(m.get("role", "user")), content=m.get("content", ""))
+                    for m in messages_in if m.get("content")
+                ]
+            else:
+                message = msg_payload.get("message", "")
+                history = [ChatMessage(role=ChatRole.USER, content=message)] if message else []
+
+            if not history:
                 continue
 
             async with AsyncSessionLocal() as db:
@@ -2199,7 +2209,6 @@ async def websocket_chat(
 
             try:
                 cfg = _get_user_llm_config(user)
-                history = [ChatMessage(role=ChatRole.USER, content=message)]
                 async for chunk in _stream_llm(cfg, history, system_prompt, max_tokens=1000):
                     await websocket.send_text(json.dumps({"token": chunk}))
                 await websocket.send_text(json.dumps({"done": True}))
@@ -2428,7 +2437,7 @@ class LLMConfigError(Exception):
 _NON_CHAT_MODEL_HINTS = (
     "whisper", "dall-e", "dalle", "embedding", "moderation",
     "tts", "transcribe", "audio", "image", "realtime", "guard",
-    "safety", "safeguard", "rerank", "orpheus"
+    "safety", "safeguard", "rerank", "orpheus",
 )
 
 
