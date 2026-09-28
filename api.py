@@ -41,6 +41,8 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from urllib.parse import urlencode
 from src.audit_log import create_audit_tables, log_event, AuditEventType ,AuditSeverity
+from src.input_sanitizer import validate_url
+
 # ─────────────────────────────────────────────────────────────────────────────
 # THIRD-PARTY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1800,6 +1802,8 @@ async def list_provider_models(
 
     style = registry_entry["style"]
     effective_base_url = base_url or registry_entry["base_url"]
+    if base_url:  
+        effective_base_url = await _require_safe_llm_url(base_url, db=db, user_id=current_user.id)
 
     effective_key = api_key
     if not effective_key:
@@ -1871,7 +1875,12 @@ async def update_settings(
         if not updates.get("llm_provider"):
             detected = _vault.detect_provider(raw_key)
             if detected:
-                updates["llm_provider"] = detected
+                updates["llm_provider"] = detected    
+    custom_base_url = updates.get("llm_custom_base_url")
+    if custom_base_url:
+        updates["llm_custom_base_url"] = await _require_safe_llm_url(
+            custom_base_url, db=db, user_id=current_user.id, as_config_error=False
+        )
 
     current.update(updates)
     await db.execute(update(DBUser).where(DBUser.id == current_user.id).values(settings=current))
@@ -2462,6 +2471,22 @@ _NON_CHAT_MODEL_HINTS = (
     "safety", "safeguard", "rerank", "orpheus",
 )
 
+async def _require_safe_llm_url(
+    url: str, *, db=None, user_id=None, as_config_error: bool = False
+) -> str:
+    """SSRF guard for user-supplied LLM base URLs."""
+    result = await asyncio.to_thread(validate_url, url)  # DNS lookup blocks; keep it off the event loop
+    if result.rejected:
+        if db is not None:
+            await log_event(
+                db, AuditEventType.SUSPICIOUS_INPUT_BLOCKED, user_id=user_id,
+                severity=AuditSeverity.WARNING,
+                detail=f"ssrf blocked: host={result.meta.get('host')} ({result.meta.get('problem') or result.reasons[0]})",
+            )
+        if as_config_error:
+            raise LLMConfigError(f"Custom base URL rejected: {result.reasons[0]}")
+        raise HTTPException(status_code=400, detail=result.reasons[0])
+    return result.value
 
 async def _fetch_live_models(style: str, base_url: str, api_key: str) -> List[str]:
     """Fetch a provider's real current model list live, using the caller's own key."""
