@@ -2239,7 +2239,7 @@ async def websocket_chat(
             )
 
             try:
-                cfg = _get_user_llm_config(user)
+                cfg = await _get_checked_llm_config(user)
                 async for chunk in _stream_llm(cfg, history, system_prompt, max_tokens=1000):
                     await websocket.send_text(json.dumps({"token": chunk}))
                 await websocket.send_text(json.dumps({"done": True}))
@@ -2524,6 +2524,22 @@ async def _fetch_live_models(style: str, base_url: str, api_key: str) -> List[st
     filtered = [mid for mid in ids if not any(hint in mid.lower() for hint in _NON_CHAT_MODEL_HINTS)]
     return sorted(filtered)
 
+async def _get_checked_llm_config(user: Optional[DBUser], db=None) -> Dict[str, Any]:
+    """_get_user_llm_config + a fresh SSRF re-check at request time.
+
+    Registry providers use hardcoded trusted URLs, so only 'custom' is re-validated.
+    Closes the save-time vs. use-time DNS-rebinding gap.
+    """
+    cfg = _get_user_llm_config(user)
+    provider = ((user.settings or {}).get("llm_provider") if user else None)
+    if provider == "custom" and cfg.get("base_url"):
+        await _require_safe_llm_url(
+            cfg["base_url"],
+            db=db,
+            user_id=getattr(user, "id", None),
+            as_config_error=True,
+        )
+    return cfg
 
 def _get_user_llm_config(user: Optional[DBUser]) -> Dict[str, Any]:
     if not user:
@@ -2723,7 +2739,7 @@ async def chat(
     )
 
     try:
-        cfg = _get_user_llm_config(current_user)
+        cfg = await _get_checked_llm_config(current_user)
         reply_text = await _call_llm_non_streaming(cfg, body.messages, system_prompt, body.max_tokens)
     except LLMConfigError as e:
         reply_text = f"⚠️ {e}"
