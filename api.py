@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from urllib.parse import urlencode
+from src.audit_log import create_audit_tables, log_event, AuditEventType ,AuditSeverity
 # ─────────────────────────────────────────────────────────────────────────────
 # THIRD-PARTY
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1261,26 +1262,7 @@ async def save_upload(file: UploadFile, user_id: str) -> UploadedFileInfo:
 # ─────────────────────────────────────────────────────────────────────────────
 # RATE LIMITING (simple in-memory, swap for Redis in production)
 # ─────────────────────────────────────────────────────────────────────────────
-class RateLimiter:
-    def __init__(self, max_calls: int, window_s: int) -> None:
-        self._max  = max_calls
-        self._win  = window_s
-        self._hits: Dict[str, List[float]] = {}
-
-    def is_allowed(self, key: str) -> bool:
-        now  = time.time()
-        hits = [t for t in self._hits.get(key, []) if now - t < self._win]
-        self._hits[key] = hits
-        if len(hits) >= self._max:
-            return False
-        self._hits[key].append(now)
-        return True
-
-
-upload_limiter = RateLimiter(max_calls=20, window_s=60)
-job_limiter    = RateLimiter(max_calls=10, window_s=60)
-auth_limiter   = RateLimiter(max_calls=10, window_s=300)  # 10 login attempts / 5 min
-
+from src.rate_limiter import RateLimiter, upload_limiter, job_limiter, auth_limiter, chat_limiter
 
 # ─────────────────────────────────────────────────────────────────────────────
 # APP LIFESPAN
@@ -1292,6 +1274,7 @@ async def lifespan(app: FastAPI):
     app.state.start_time = time.time()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await create_audit_tables(conn)
     await job_queue.start()
     log.info("✅ Database ready | ✅ Job queue running (%d workers)", WORKER_COUNT)
     yield
@@ -1383,6 +1366,10 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
         )
     )
     if existing.scalar_one_or_none():
+        await log_event(
+            db, AuditEventType.REGISTER_FAILED, ip=ip,
+            detail=f"duplicate username/email: {body.username}",
+        )
         raise HTTPException(status_code=409, detail="Username or email already exists")
 
     user = DBUser(
@@ -1394,9 +1381,9 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
     )
     db.add(user)
     await db.commit()
+    await log_event(db, AuditEventType.REGISTER_SUCCESS, user_id=user.id, ip=ip, detail=user.username)
     log.info("New user registered: %s", user.username)
     return UserPublic(id=user.id, username=user.username, email=user.email, created_at=user.created_at, is_active=user.is_active)
-
 
 @app.post("/api/v1/auth/login", response_model=TokenResponse, tags=["Auth"])
 async def login(
@@ -1406,17 +1393,24 @@ async def login(
     """Login and receive JWT access + refresh tokens."""
     ip = request.client.host
     if not auth_limiter.is_allowed(f"login:{ip}"):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, ip=ip, detail="login rate limit")
         raise HTTPException(status_code=429, detail="Too many login attempts. Wait 5 minutes.")
 
     result = await db.execute(
-    select(DBUser).where(
-        or_(DBUser.username == body.username, DBUser.email == body.username)
+        select(DBUser).where(
+            or_(DBUser.username == body.username, DBUser.email == body.username)
+        )
     )
-)
     user   = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.hashed_password):
+        await log_event(
+            db, AuditEventType.LOGIN_FAILED, ip=ip,
+            user_id=(user.id if user else None),
+            detail=f"attempted login: {body.username}",
+        )
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if not user.is_active:
+        await log_event(db, AuditEventType.LOGIN_FAILED, user_id=user.id, ip=ip, detail="account deactivated")
         raise HTTPException(status_code=403, detail="Account deactivated")
 
     access_token               = make_access_token(user.id, user.username)
@@ -1430,6 +1424,7 @@ async def login(
         ip_address=ip,
     ))
     await db.execute(update(DBUser).where(DBUser.id == user.id).values(last_login=datetime.utcnow()))
+    await log_event(db, AuditEventType.LOGIN_SUCCESS, user_id=user.id, ip=ip)
     await db.commit()
 
     return TokenResponse(
@@ -1867,7 +1862,10 @@ async def update_settings(
     current.update(updates)
     await db.execute(update(DBUser).where(DBUser.id == current_user.id).values(settings=current))
     await db.commit()
-
+    await log_event(
+        db, AuditEventType.SETTINGS_CHANGED, user_id=current_user.id,
+        detail=f"updated: {', '.join(updates.keys())}",
+    )
     try:
         result = UserSettings(**{k: v for k, v in current.items() if k != "llm_api_key_encrypted"})
     except Exception:
@@ -1895,8 +1893,8 @@ async def upload_file(
 ):
     """Upload a single file. Returns file_id to use in job requests."""
     if not upload_limiter.is_allowed(current_user.id):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="upload rate limit")
         raise HTTPException(status_code=429, detail="Upload rate limit exceeded (20/min)")
-
     file_info = await save_upload(file, current_user.id)
 
     db.add(DBUploadedFile(
@@ -1924,8 +1922,8 @@ async def upload_multi(
 ):
     """Upload train + test files for the Training Data Audit feature."""
     if not upload_limiter.is_allowed(current_user.id):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="train/test upload rate limit")
         raise HTTPException(status_code=429, detail="Upload rate limit exceeded")
-
     train_info, test_info = await asyncio.gather(
         save_upload(train_file, current_user.id),
         save_upload(test_file, current_user.id),
@@ -1977,8 +1975,8 @@ async def create_job(
     Subscribe to WS /api/v1/ws/{job_id} for live progress.
     """
     if not job_limiter.is_allowed(current_user.id):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="job rate limit")
         raise HTTPException(status_code=429, detail="Job rate limit exceeded (10/min)")
-
     # Verify file exists and belongs to user
     file_id  = body.train_file_id if hasattr(body, "train_file_id") else body.file_id
     f_result = await db.execute(
@@ -2010,6 +2008,12 @@ async def create_job(
     )
     db.add(db_job)
     await db.commit()
+    await log_event(
+        db, AuditEventType.JOB_CREATED, user_id=current_user.id,
+        detail=f"job={job_id} goal={body.goal} file={file_id}",
+    )
+
+    await job_queue.enqueue(job_id)
 
     await job_queue.enqueue(job_id)
 
@@ -2174,6 +2178,10 @@ async def websocket_chat(
             data = await websocket.receive_text()
             msg_payload = json.loads(data)
             job_id = msg_payload.get("job_id")
+
+            if not chat_limiter.is_allowed(user_id):
+                await websocket.send_json({"type": "error", "detail": "Chat rate limit exceeded (20/min)"})
+                continue
 
             messages_in = msg_payload.get("messages")
             if messages_in:
@@ -2652,6 +2660,9 @@ async def chat(
     db: AsyncSession = Depends(get_db),
 ):
     """Chat with Nydra AI — optionally grounded in a job's analysis results."""
+    if not chat_limiter.is_allowed(current_user.id):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="chat rate limit")
+        raise HTTPException(status_code=429, detail="Chat rate limit exceeded (20/min)")
     context = ""
     used_context = False
 

@@ -46,3 +46,9 @@ mnist-dataset.zip
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Audit log archive exports
+logs/
+
+__pycache__/
+*.pyc
