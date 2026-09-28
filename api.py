@@ -763,6 +763,7 @@ async def _mark_job_failed(job_id: str, error: str) -> None:
             )
         )
         await db.commit()
+        await log_event(db, AuditEventType.JOB_FAILED, detail=f"job={job_id}: {error[:200]}")
 
 
 async def _update_job_progress(
@@ -942,8 +943,11 @@ async def run_job(job_id: str) -> None:
                 )
             )
             await db.commit()
+            await log_event(
+                db, AuditEventType.JOB_FAILED,
+                detail=f"job={job_id}: {str(exc)[:200]}",
+            )
             await ws_manager.send_error(job_id, "AGENT_ERROR", str(exc))
-
 
 def _build_step_plan(goal: JobGoal) -> List[Dict[str, str]]:
     """Returns ordered step definitions for each goal."""
@@ -1680,7 +1684,9 @@ async def google_exchange(body: GoogleExchangeRequest, db: AsyncSession = Depend
         expires_at=refresh_exp,
     ))
     await db.execute(update(DBUser).where(DBUser.id == user.id).values(last_login=datetime.utcnow()))
+    await log_event(db, AuditEventType.OAUTH_LOGIN, user_id=user.id, detail=user.username)
     await db.commit()
+
 
     return TokenResponse(
         access_token=access_token,
@@ -1710,6 +1716,10 @@ async def create_api_key(
     )
     db.add(api_key)
     await db.commit()
+    await log_event(
+        db, AuditEventType.API_KEY_CREATED, user_id=current_user.id,
+        detail=f"key={api_key.id} name={str(body.name)[:100]}",
+    )
 
     return APIKeyFull(
         id=api_key.id, name=api_key.name, key_prefix=api_key.key_prefix,
@@ -1751,6 +1761,10 @@ async def revoke_api_key(
         raise HTTPException(status_code=404, detail="API key not found")
     await db.execute(update(DBAPIKey).where(DBAPIKey.id == key_id).values(is_active=False))
     await db.commit()
+    await log_event(
+        db, AuditEventType.API_KEY_REVOKED, user_id=current_user.id,
+        detail=f"key={key_id}",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
