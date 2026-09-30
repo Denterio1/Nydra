@@ -2759,7 +2759,7 @@ async def chat(
     except LLMConfigError as e:
         reply_text = f"⚠️ {e}"
     except httpx.HTTPStatusError as e:
-        log.error("LLM provider error: %s", e)
+        log.error("LLM provider error: %s", e.response.status_code)
         reply_text = f"⚠️ The AI provider returned an error ({e.response.status_code}). Check your API key and model in Settings."
     except Exception as e:
         log.error("LLM call failed: %s", getattr(getattr(e, "response", None), "status_code", type(e).__name__))
