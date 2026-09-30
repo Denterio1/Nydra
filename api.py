@@ -41,7 +41,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from urllib.parse import urlencode
 from src.audit_log import create_audit_tables, log_event, AuditEventType ,AuditSeverity
-from src.input_sanitizer import validate_url
+from src.input_sanitizer import validate_url, sanitize_text, sanitize_filename
 
 # ─────────────────────────────────────────────────────────────────────────────
 # THIRD-PARTY
@@ -307,6 +307,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("nydra.api")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DATABASE — Models
@@ -2208,14 +2209,16 @@ async def websocket_chat(
 
             messages_in = msg_payload.get("messages")
             if messages_in:
-                history = [
-                    ChatMessage(role=ChatRole(m.get("role", "user")), content=m.get("content", ""))
-                    for m in messages_in if m.get("content")
-                ]
+                history = []
+                for m in messages_in:
+                    content = _clean_chat_text(m.get("content", ""))
+                    if content:
+                        history.append(
+                            ChatMessage(role=ChatRole(m.get("role", "user")), content=content)
+                        )
             else:
-                message = msg_payload.get("message", "")
+                message = _clean_chat_text(msg_payload.get("message", ""))
                 history = [ChatMessage(role=ChatRole.USER, content=message)] if message else []
-
             if not history:
                 continue
 
@@ -2237,7 +2240,9 @@ async def websocket_chat(
                 "and guide users toward better data quality."
                 + context
             )
+            log.info("WS chat context: job_id=%s chars=%d", job_id, len(context))
 
+            
             try:
                 cfg = await _get_checked_llm_config(user)
                 async for chunk in _stream_llm(cfg, history, system_prompt, max_tokens=1000):
@@ -2246,7 +2251,7 @@ async def websocket_chat(
             except LLMConfigError as e:
                 await websocket.send_text(json.dumps({"error": str(e)}))
             except Exception as e:
-                log.error("WS LLM call failed: %s", e)
+                log.error("WS LLM call failed: %s", getattr(getattr(e, "response", None), "status_code", type(e).__name__))
                 await websocket.send_text(json.dumps({"error": "Something went wrong contacting the AI provider."}))
 
     except WebSocketDisconnect:
@@ -2523,6 +2528,10 @@ async def _fetch_live_models(style: str, base_url: str, api_key: str) -> List[st
 
     filtered = [mid for mid in ids if not any(hint in mid.lower() for hint in _NON_CHAT_MODEL_HINTS)]
     return sorted(filtered)
+def _clean_chat_text(text: Any) -> Optional[str]:
+    """Sanitize one chat message. Returns cleaned text, or None if unusable."""
+    r = sanitize_text(text, max_length=20_000, allow_newlines=True, on_too_long="truncate")
+    return None if r.rejected else r.value
 
 async def _get_checked_llm_config(user: Optional[DBUser], db=None) -> Dict[str, Any]:
     """_get_user_llm_config + a fresh SSRF re-check at request time.
@@ -2737,17 +2746,23 @@ async def chat(
         "and guide users toward better data quality."
         + context
     )
-
+    cleaned_messages = []
+    for m in body.messages:
+        content = _clean_chat_text(m.content)
+        if content:
+            cleaned_messages.append(m.model_copy(update={"content": content}))
+    if not cleaned_messages:
+        raise HTTPException(status_code=400, detail="Message is empty or contains invalid characters.")
     try:
         cfg = await _get_checked_llm_config(current_user)
-        reply_text = await _call_llm_non_streaming(cfg, body.messages, system_prompt, body.max_tokens)
+        reply_text = await _call_llm_non_streaming(cfg, cleaned_messages, system_prompt, body.max_tokens)
     except LLMConfigError as e:
         reply_text = f"⚠️ {e}"
     except httpx.HTTPStatusError as e:
         log.error("LLM provider error: %s", e)
         reply_text = f"⚠️ The AI provider returned an error ({e.response.status_code}). Check your API key and model in Settings."
     except Exception as e:
-        log.error("LLM call failed: %s", e)
+        log.error("LLM call failed: %s", getattr(getattr(e, "response", None), "status_code", type(e).__name__))
         reply_text = "⚠️ Something went wrong contacting the AI provider. Please try again."
 
     reply = ChatMessage(role=ChatRole.ASSISTANT, content=reply_text)
