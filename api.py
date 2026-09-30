@@ -309,6 +309,27 @@ logging.basicConfig(
 log = logging.getLogger("nydra.api")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+import re as _re
+
+
+class _RedactTokenFilter(logging.Filter):
+    """Strip ?token=... from uvicorn log lines so JWTs never reach the logs."""
+    _pat = _re.compile(r"([?&]token=)[^\s&\"']+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            if "token=" in msg:
+                record.msg = self._pat.sub(r"\1[REDACTED]", msg)
+                record.args = ()
+        except Exception:
+            pass
+        return True
+
+
+for _name in ("uvicorn.error", "uvicorn.access"):
+    logging.getLogger(_name).addFilter(_RedactTokenFilter())
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DATABASE — Models
 # ─────────────────────────────────────────────────────────────────────────────
