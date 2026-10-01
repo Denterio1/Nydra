@@ -808,10 +808,27 @@ export default function Dashboard({
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ job_id: jobId, format: fmt }),
     });
-    if (res.ok) {
-      const data = await res.json();
-      window.open(`${API_BASE}${data.download_url}`, "_blank");
+    if (!res.ok) {
+      console.error("Report generation failed:", res.status);
+      return;
     }
+    const data = await res.json();
+    const fileRes = await fetch(`${API_BASE}${data.download_url}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!fileRes.ok) {
+      console.error("Report download failed:", fileRes.status);
+      return;
+    }
+    const blob = await fileRes.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nydra-report-${jobId.slice(0, 8)}.${fmt}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   if (!jobId) return null;
