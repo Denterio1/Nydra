@@ -1188,6 +1188,8 @@ def _dispatch_step(
 
 
     # All other steps delegate to the agent
+    if "step_log" in accumulated:
+        return {}
     if hasattr(doctor, "achieve_goal"):
         df = _load_dataframe(file_path)
         if df is None:
@@ -2057,8 +2059,6 @@ async def create_job(
         db, AuditEventType.JOB_CREATED, user_id=current_user.id,
         detail=f"job={job_id} goal={body.goal} file={file_id}",
     )
-
-    await job_queue.enqueue(job_id)
 
     await job_queue.enqueue(job_id)
 
