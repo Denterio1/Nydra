@@ -937,11 +937,11 @@ async def run_job(job_id: str) -> None:
             await db.commit()
 
             # ── Notify subscribers ────────────────────────────────────────
-            score        = result_data.get("quality", {}).get("overall_score")
-            verdict      = result_data.get("quality", {}).get("verdict")
-            total_issues = len(result_data.get("issues", []))
+            _q           = _derive_quality(result_data)
+            score        = _q["score"]
+            verdict      = _q["verdict"]
+            total_issues = _q["issues"]
             summary      = _build_summary(goal, result_data)
-
             await ws_manager.send_done(
                 job_id,
                 result_url=f"/api/v1/jobs/{job_id}/result",
@@ -1205,13 +1205,40 @@ def _dispatch_step(
     return {}
 
 
+def _derive_quality(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Score/verdict/issue count from the agent's real output."""
+    q = result.get("quality") or {}
+    score = q.get("overall_score")
+    if score is None:
+        score = (result.get("ml_readiness") or {}).get("score")
+
+    verdict = q.get("verdict")
+    if verdict not in ("ready", "needs_work", "not_ready"):
+        verdict = None
+        if isinstance(score, (int, float)):
+            verdict = "ready" if score >= 80 else "needs_work" if score >= 50 else "not_ready"
+
+    issues = len(result.get("issues") or [])
+    if not issues:
+        analyze = result.get("analyze") or {}
+        issues += sum(1 for v in (analyze.get("missing_values") or {}).values() if v)
+        if analyze.get("duplicate_rows"):
+            issues += 1
+        if (result.get("detect_outliers") or {}).get("n_outliers"):
+            issues += 1
+
+    return {"score": score, "verdict": verdict, "issues": issues}
+
+
 def _build_summary(goal: JobGoal, result: Dict[str, Any]) -> str:
-    score   = result.get("quality", {}).get("overall_score", "N/A")
-    issues  = len(result.get("issues", []))
-    verdict = result.get("quality", {}).get("verdict", "unknown")
+    d = _derive_quality(result)
+    score = d["score"] if d["score"] is not None else "N/A"
+    verdict = (d["verdict"] or "unknown").replace("_", " ")
+    rows, cols = result.get("rows"), result.get("columns")
+    shape = f" | {rows} rows x {cols} cols" if rows is not None and cols is not None else ""
     return (
         f"{goal.value.replace('_', ' ').title()} complete. "
-        f"Quality score: {score}/100 | Verdict: {verdict} | Issues found: {issues}"
+        f"ML readiness: {score}/100 | Verdict: {verdict} | Issues found: {d['issues']}{shape}"
     )
 
 
@@ -2324,13 +2351,21 @@ async def websocket_job_progress(
             "cancelled": WSEventType.JOB_CANCELLED,
         }[job.status]
         if job.status == "done":
+            _rd = job.result_data or {}
+            _q = _derive_quality(_rd)
+            try:
+                _goal = JobGoal(job.goal)
+            except ValueError:
+                _goal = JobGoal.INSPECT
             msg = WSMessage(
                 event=event_type, job_id=job_id,
                 payload=WSResultPayload(
                     job_id=job_id,
                     result_url=f"/api/v1/jobs/{job_id}/result",
-                    summary="Job already completed",
-                    score=None, verdict=None, total_issues=0,
+                    summary=_build_summary(_goal, _rd),
+                    score=_q["score"],
+                    verdict=Verdict(_q["verdict"]) if _q["verdict"] else None,
+                    total_issues=_q["issues"],
                     duration_ms=job.duration_ms or 0,
                 ),
             )
