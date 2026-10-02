@@ -1151,7 +1151,7 @@ async def _run_agent(
             await tracker.finish_step(db, warnings=[str(exc)])
             # Continue to next step (self-healing)
 
-    return _sanitize_for_json(result)
+    return _enrich_result_for_ui(_sanitize_for_json(result))
 
 
 def _dispatch_step(
@@ -1205,6 +1205,144 @@ def _dispatch_step(
     return {}
 
 
+def _enrich_result_for_ui(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Add the overview / issues / quality keys the dashboard reads, built from
+    the agent's own analyze + detect_outliers output. Only adds missing keys."""
+    try:
+        analyze = result.get("analyze") or {}
+        if not isinstance(analyze, dict) or "shape" not in analyze:
+            return result
+        shape = analyze.get("shape") or {}
+        rows = int(shape.get("rows") or 0)
+        cols = int(shape.get("columns") or 0)
+        missing_map = analyze.get("missing_values") or {}
+        dup_raw = analyze.get("duplicate_rows") or 0
+        dup = int(dup_raw) if isinstance(dup_raw, (int, float)) else len(dup_raw)
+        total_missing = int(sum(v or 0 for v in missing_map.values()))
+        missing_pct = round(total_missing / max(rows * cols, 1) * 100, 2)
+        dup_pct = round(dup / max(rows, 1) * 100, 2)
+        outl = result.get("detect_outliers") or {}
+        n_out = int(outl.get("n_outliers") or 0)
+        out_rate = float(outl.get("outlier_rate") or 0.0)
+
+        if isinstance(outl, dict) and n_out and "preview" not in outl:
+            try:
+                import pandas as _pd
+                _p = str(result.get("_df_path") or "")
+                _ext = _p.rsplit(".", 1)[-1].lower() if "." in _p else ""
+                _readers = {
+                    "csv": _pd.read_csv, "xlsx": _pd.read_excel, "xls": _pd.read_excel,
+                    "json": _pd.read_json, "parquet": _pd.read_parquet,
+                    "tsv": lambda f: _pd.read_csv(f, sep="\t"),
+                }
+                if _ext in _readers:
+                    _df = _readers[_ext](_p)
+                    _idx = [int(i) for i in (outl.get("outlier_indices") or []) if 0 <= int(i) < len(_df)][:20]
+                    _sub = _df.iloc[_idx].iloc[:, :12]
+                    def _cell(v):
+                        if _pd.isna(v):
+                            return None
+                        v = v.item() if hasattr(v, "item") else v
+                        return v if isinstance(v, (int, float, str, bool)) else str(v)
+                    outl["preview"] = {
+                        "columns": [str(c) for c in _sub.columns],
+                        "rows": [
+                            {"_row": i, **{str(k): _cell(v) for k, v in r.items()}}
+                            for i, (_, r) in zip(_idx, _sub.iterrows())
+                        ],
+                    }
+            except Exception as exc:
+                log.warning("Outlier preview skipped: %s", type(exc).__name__)
+
+        if "overview" not in result:
+            col_stats = []
+            for name, cs in (analyze.get("column_stats") or {}).items():
+                miss = int(missing_map.get(name, cs.get("nulls", 0)) or 0)
+                item = {
+                    "name": str(name),
+                    "dtype": str(cs.get("type", "unknown")),
+                    "inferred_type": str(cs.get("type", "unknown")),
+                    "missing": miss,
+                    "missing_pct": round(miss / max(rows, 1) * 100, 2),
+                    "unique": int(cs.get("unique") or 0),
+                }
+                for k in ("mean", "min", "max"):
+                    if isinstance(cs.get(k), (int, float)):
+                        item[k] = cs[k]
+                col_stats.append(item)
+            p = str(result.get("_df_path") or "")
+            try:
+                size_mb = round(Path(p).stat().st_size / 1_048_576, 3)
+            except OSError:
+                size_mb = 0
+            result["overview"] = {
+                "rows": rows, "columns": cols, "file_size_mb": size_mb,
+                "file_type": p.rsplit(".", 1)[-1].lower() if "." in p else "",
+                "total_missing": total_missing, "missing_pct": missing_pct,
+                "total_duplicates": dup, "duplicate_pct": dup_pct,
+                "column_stats": col_stats,
+            }
+
+        if "issues" not in result:
+            issues = []
+            for name, miss in missing_map.items():
+                if not miss:
+                    continue
+                pct = miss / max(rows, 1) * 100
+                issues.append({
+                    "issue_id": f"missing_{name}", "code": "MISSING_VALUES",
+                    "title": f"Missing values in {name}",
+                    "description": f"{int(miss)} missing ({pct:.1f}%)",
+                    "severity": "high" if pct >= 30 else "medium" if pct >= 10 else "low",
+                    "affected_columns": [str(name)],
+                    "suggestion": "Impute with Smart Impute (KNN or MICE)",
+                    "auto_fixable": True,
+                })
+            if dup:
+                issues.append({
+                    "issue_id": "duplicate_rows", "code": "DUPLICATE_ROWS",
+                    "title": "Duplicate rows",
+                    "description": f"{dup} duplicate rows ({dup_pct:.1f}%)",
+                    "severity": "medium" if dup_pct >= 5 else "low",
+                    "affected_columns": [],
+                    "suggestion": "Remove duplicate rows",
+                    "auto_fixable": True,
+                })
+            if n_out:
+                recs = outl.get("recommendations") or []
+                issues.append({
+                    "issue_id": "outliers", "code": "OUTLIERS",
+                    "title": "Outliers detected",
+                    "description": f"{n_out} outlier rows ({out_rate:.1%})",
+                    "severity": outl.get("severity") if outl.get("severity") in ("critical", "high", "medium", "low") else "low",
+                    "affected_columns": [],
+                    "suggestion": str(recs[0]) if recs else "Review flagged rows",
+                    "auto_fixable": False,
+                })
+            result["issues"] = issues
+
+        if "quality" not in result:
+            dims = [
+                {"name": "Completeness", "score": round(max(0.0, 100 - missing_pct), 1), "weight": 0.4, "issues": []},
+                {"name": "Uniqueness", "score": round(max(0.0, 100 - dup_pct), 1), "weight": 0.3, "issues": []},
+                {"name": "Outlier-free", "score": round(max(0.0, 100 * (1 - out_rate)), 1), "weight": 0.3, "issues": []},
+            ]
+            ml = (result.get("ml_readiness") or {}).get("score")
+            score = int(round(float(ml))) if isinstance(ml, (int, float)) else int(round(sum(d["score"] * d["weight"] for d in dims)))
+            verdict = "ready" if score >= 80 else "needs_work" if score >= 50 else "not_ready"
+            grade = "A" if score >= 90 else "B" if score >= 80 else "C" if score >= 70 else "D" if score >= 60 else "F"
+            checklist = [f"{i['title']}: {i['suggestion']}" for i in result["issues"]]
+            result["quality"] = {
+                "overall_score": score, "verdict": verdict, "grade": grade,
+                "dimensions": dims,
+                "critical_issues": [i["title"] for i in result["issues"] if i["severity"] in ("critical", "high")],
+                "fix_checklist": checklist or ["No fixes needed: data looks clean."],
+                "estimated_model_impact": "Low risk" if score >= 80 else "Moderate: fix issues before training" if score >= 50 else "High risk: fix issues before training",
+            }
+    except Exception as exc:
+        log.warning("UI enrichment skipped: %s", type(exc).__name__)
+    return result
+
 def _derive_quality(result: Dict[str, Any]) -> Dict[str, Any]:
     """Score/verdict/issue count from the agent's real output."""
     q = result.get("quality") or {}
@@ -1227,7 +1365,7 @@ def _derive_quality(result: Dict[str, Any]) -> Dict[str, Any]:
         if (result.get("detect_outliers") or {}).get("n_outliers"):
             issues += 1
 
-    return {"score": score, "verdict": verdict, "issues": issues}
+    return {"score": int(round(score)) if isinstance(score, (int, float)) else None, "verdict": verdict, "issues": issues}
 
 
 def _build_summary(goal: JobGoal, result: Dict[str, Any]) -> str:
