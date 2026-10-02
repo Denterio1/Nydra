@@ -173,7 +173,7 @@ useEffect(() => {
       let currentFilename = "";
 
       if (result.mode === "single") {
-        currentGoal = "inspect";
+        currentGoal = activeWorkspace === "REPAIR_SHOP" ? "clean" : "inspect";
         currentFilename = result.file.filename;
         jobRequest = {
           file_id: result.file.file_id,
