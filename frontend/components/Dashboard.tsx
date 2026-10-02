@@ -529,6 +529,101 @@ function QualitySection({ quality }: { quality: NonNullable<JobResultData["quali
   );
 }
 
+function OutliersView({ data }: { data?: any }) {
+  const mono = "JetBrains Mono, monospace";
+  const card = { background: "rgba(8,14,27,0.8)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 } as const;
+  const label = { fontFamily: mono, fontSize: 10, fontWeight: 700, letterSpacing: 2, color: "#475569", marginBottom: 12 } as const;
+  if (!data || data.error) {
+    return (
+      <div style={{ ...card, textAlign: "center", padding: 40 }}>
+        <span style={{ fontFamily: mono, fontSize: 10, color: "#475569" }}>NO OUTLIER DATA FOR THIS JOB.</span>
+      </div>
+    );
+  }
+  const sevColor: Record<string, string> = { critical: "#f43f5e", high: "#f97316", medium: "#f59e0b", low: "#3b82f6", none: "#22c55e" };
+  const color = sevColor[data.severity] ?? "#64748b";
+  const breakdown = Object.entries(data.report?.method_breakdown ?? {})
+    .map(([k, v]: [string, any]) => {
+      const parts = k.split("|");
+      return { method: parts[0], column: parts[1] ?? k, count: v?.outlier_count ?? 0, rate: v?.outlier_rate ?? 0 };
+    })
+    .filter((b) => b.count > 0)
+    .sort((a, b) => b.count - a.count);
+  const maxCount = Math.max(1, ...breakdown.map((b) => b.count));
+  const stats = [
+    { label: "OUTLIERS", value: String(data.n_outliers ?? 0), color },
+    { label: "RATE", value: `${((data.outlier_rate ?? 0) * 100).toFixed(1)}%`, color },
+    { label: "METHOD", value: String(data.method_used ?? "-").toUpperCase(), color: "#7c3aed" },
+    { label: "SEVERITY", value: String(data.severity ?? "none").toUpperCase(), color },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+        {stats.map((st) => (
+          <div key={st.label} style={{ ...card, padding: "12px 14px" }}>
+            <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: 2, color: "#475569" }}>{st.label}</div>
+            <div style={{ fontFamily: mono, fontSize: 18, fontWeight: 700, color: st.color, marginTop: 4 }}>{st.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {breakdown.length > 0 && (
+        <div style={card}>
+          <div style={label}>PER-COLUMN BREAKDOWN</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {breakdown.map((b, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "160px 1fr 110px", gap: 10, alignItems: "center" }}>
+                <span style={{ fontFamily: mono, fontSize: 11, color: "#94a3b8" }}>{b.column}</span>
+                <div style={{ background: "rgba(51,65,85,0.3)", borderRadius: 3, height: 8 }}>
+                  <div style={{ width: `${(b.count / maxCount) * 100}%`, height: 8, borderRadius: 3, background: color }} />
+                </div>
+                <span style={{ fontFamily: mono, fontSize: 10, color: "#64748b", textAlign: "right" }}>
+                  {b.count} ({(b.rate * 100).toFixed(1)}%)
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.preview?.rows?.length > 0 && (
+        <div style={{ ...card, overflowX: "auto" }}>
+          <div style={label}>OUTLIER ROWS (FIRST {data.preview.rows.length})</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: mono, fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "4px 8px", color: "#475569" }}>ROW</th>
+                {data.preview.columns.map((c: string) => (
+                  <th key={c} style={{ textAlign: "left", padding: "4px 8px", color: "#475569" }}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.preview.rows.map((r: any, i: number) => (
+                <tr key={i} style={{ borderTop: "1px solid rgba(51,65,85,0.3)" }}>
+                  <td style={{ padding: "4px 8px", color: color }}>{r._row}</td>
+                  {data.preview.columns.map((c: string) => (
+                    <td key={c} style={{ padding: "4px 8px", color: "#94a3b8" }}>{r[c] === null || r[c] === undefined ? "-" : String(r[c])}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {Array.isArray(data.recommendations) && data.recommendations.length > 0 && (
+        <div style={card}>
+          <div style={label}>RECOMMENDATIONS</div>
+          {data.recommendations.map((rec: string, i: number) => (
+            <div key={i} style={{ fontFamily: mono, fontSize: 11, color: "#94a3b8", padding: "4px 0" }}>{rec}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverviewStats({ overview }: { overview: NonNullable<JobResultData["overview"]> }) {
   const stats = [
     { label: "ROWS",       value: overview.rows.toLocaleString(),           color: "#00d4aa" },
@@ -1089,11 +1184,7 @@ export default function Dashboard({
                 {activeTab === "columns" && resultData.overview && (
                   <ColumnTable columns={resultData.overview.column_stats} />
                 )}
-                {activeTab === "outliers" && (
-                   <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
-                     <span style={{ fontSize: 10, color: "#475569" }}>OUTLIER DETECTION MODULE LOADED. (Scanning Column Profiler Results...)</span>
-                   </div>
-                )}
+                {activeTab === "outliers" && <OutliersView data={(resultData as any).detect_outliers} />}
                 {activeTab === "distributions" && (
                    <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
                      <span style={{ fontSize: 10, color: "#475569" }}>DISTRIBUTION ANALYSIS MODULE LOADED. (Fitting 20 distributions...)</span>
