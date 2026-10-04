@@ -529,6 +529,113 @@ function QualitySection({ quality }: { quality: NonNullable<JobResultData["quali
   );
 }
 
+function DistributionsView({ jobId, token, apiBase }: { jobId?: string | null; token?: string | null; apiBase: string }) {
+  const mono = "JetBrains Mono, monospace";
+  const card = { background: "rgba(8,14,27,0.8)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 } as const;
+  const label = { fontSize: 10, letterSpacing: "0.12em", color: "#64748b", fontFamily: mono } as const;
+  const [data, setData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!jobId) { setLoading(false); return; }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(`${apiBase}/api/v1/jobs/${jobId}/distributions`, {
+      headers: { Authorization: `Bearer ${token ?? ""}` },
+    })
+      .then(async (res) => {
+        if (res.status === 202) throw new Error("Job is still running. Reopen this tab in a moment.");
+        if (!res.ok) throw new Error(`Request failed (${res.status})`);
+        return res.json();
+      })
+      .then((json) => { if (!cancelled) setData(json); })
+      .catch((e) => { if (!cancelled) setError(e.message || "Failed to load distributions"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [jobId, token, apiBase]);
+
+  if (loading) {
+    return (
+      <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
+        <span style={{ fontSize: 10, color: "#64748b", fontFamily: mono }}>
+          FITTING DISTRIBUTIONS... (first load can take up to a minute)
+        </span>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div style={{ ...card, color: "#f87171", fontSize: 11, fontFamily: mono }}>{error}</div>
+    );
+  }
+  const cols: any[] = data?.columns ?? [];
+  if (cols.length === 0) {
+    return (
+      <div style={{ ...card, color: "#64748b", fontSize: 11, fontFamily: mono }}>
+        {data?.note ?? "No numeric columns suitable for distribution analysis."}
+      </div>
+    );
+  }
+
+  const badge = (text: string, color: string) => (
+    <span style={{ fontSize: 9, letterSpacing: "0.08em", fontFamily: mono, color, border: `1px solid ${color}55`, borderRadius: 4, padding: "2px 6px", marginRight: 6 }}>
+      {text}
+    </span>
+  );
+  const fmt = (v: any, d = 2) => (typeof v === "number" ? v.toFixed(d) : "-");
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 14 }}>
+      {cols.map((c) => {
+        const counts: number[] = c.histogram?.counts ?? [];
+        const edges: number[] = c.histogram?.edges ?? [];
+        const max = Math.max(1, ...counts);
+        const W = 300, H = 90;
+        const bw = counts.length ? W / counts.length : W;
+        return (
+          <div key={c.column} style={card}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 13, color: "#e2e8f0", fontFamily: mono }}>{c.column}</span>
+              <span style={label}>n = {c.n}</span>
+            </div>
+
+            <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+              {counts.map((n, i) => {
+                const h = (n / max) * (H - 4);
+                return <rect key={i} x={i * bw + 1} y={H - h} width={Math.max(1, bw - 2)} height={h} fill="#38bdf8" opacity={0.85} rx={1} />;
+              })}
+            </svg>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2, marginBottom: 10 }}>
+              <span style={label}>{edges.length ? fmt(edges[0], 1) : ""}</span>
+              <span style={label}>{edges.length ? fmt(edges[edges.length - 1], 1) : ""}</span>
+            </div>
+
+            <div style={{ marginBottom: 8 }}>
+              {c.normality && badge(c.normality.is_normal ? "NORMAL" : "NOT NORMAL", c.normality.is_normal ? "#34d399" : "#fbbf24")}
+              {c.shape?.skewness_type && badge(String(c.shape.skewness_type).replace(/_/g, " ").toUpperCase(), "#94a3b8")}
+              {c.shape?.possibly_bimodal && badge("BIMODAL?", "#a78bfa")}
+            </div>
+
+            <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: mono, lineHeight: 1.7 }}>
+              {c.best_fit && <div>best fit: <span style={{ color: "#e2e8f0" }}>{c.best_fit.distribution}</span> (KS p = {fmt(c.best_fit.ks_p, 3)})</div>}
+              {c.shape && <div>skew {fmt(c.shape.skewness)} | excess kurtosis {fmt(c.shape.kurtosis_excess)}</div>}
+              {c.transform && (
+                <div>
+                  transform: {c.transform.needed
+                    ? <span style={{ color: "#fbbf24" }}>{c.transform.best ?? "none"} (skew after {fmt(c.transform.skewness_after)})</span>
+                    : <span style={{ color: "#34d399" }}>not needed</span>}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function OutliersView({ data }: { data?: any }) {
   const mono = "JetBrains Mono, monospace";
   const card = { background: "rgba(8,14,27,0.8)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 } as const;
@@ -1185,11 +1292,7 @@ export default function Dashboard({
                   <ColumnTable columns={resultData.overview.column_stats} />
                 )}
                 {activeTab === "outliers" && <OutliersView data={(resultData as any).detect_outliers} />}
-                {activeTab === "distributions" && (
-                   <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
-                     <span style={{ fontSize: 10, color: "#475569" }}>DISTRIBUTION ANALYSIS MODULE LOADED. (Fitting 20 distributions...)</span>
-                   </div>
-                )}
+                {activeTab === "distributions" && <DistributionsView jobId={jobId} token={token} apiBase={API_BASE} />}
 
                 {/* --- REPAIR SHOP VIEWS --- */}
                 {activeTab === "checklist" && resultData.quality && (
