@@ -2322,6 +2322,62 @@ async def get_job_result(
     return JSONResponse(content=job.result_data or {})
 
 
+_DIST_CACHE: Dict[str, Any] = {}
+
+
+@app.get("/api/v1/jobs/{job_id}/distributions", tags=["Jobs"])
+async def get_job_distributions(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Distribution analysis for a finished job. Computed lazily, cached per job."""
+    res = await db.execute(
+        select(DBJob).where(DBJob.id == job_id, DBJob.user_id == current_user.id)
+    )
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("pending", "running"):
+        raise HTTPException(status_code=202, detail="Job still in progress")
+    if job.status == "failed":
+        raise HTTPException(status_code=500, detail="Job failed")
+
+    if job_id in _DIST_CACHE:
+        return JSONResponse(content=_DIST_CACHE[job_id])
+
+    df_path = str((job.result_data or {}).get("_df_path") or "")
+    if not df_path or not Path(df_path).exists():
+        raise HTTPException(status_code=404, detail="Source file not available for this job")
+
+    def _compute() -> Dict[str, Any]:
+        import pandas as pd
+        from src.distributions_ui import build_distributions
+        ext = Path(df_path).suffix.lower().lstrip(".")
+        if ext == "csv":
+            df = pd.read_csv(df_path)
+        elif ext in ("xlsx", "xls"):
+            df = pd.read_excel(df_path)
+        elif ext == "json":
+            df = pd.read_json(df_path)
+        elif ext == "parquet":
+            df = pd.read_parquet(df_path)
+        elif ext == "tsv":
+            df = pd.read_csv(df_path, sep="\t")
+        else:
+            return {"columns": [], "note": "Unsupported file type for distributions."}
+        return build_distributions(df)
+
+    try:
+        payload = await asyncio.to_thread(_compute)
+    except Exception as e:
+        log.error("Distributions failed: %s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Distribution analysis failed")
+
+    _DIST_CACHE[job_id] = payload
+    return JSONResponse(content=payload)
+
+
 @app.delete("/api/v1/jobs/{job_id}", status_code=204, tags=["Jobs"])
 async def cancel_job(
     job_id: str,
