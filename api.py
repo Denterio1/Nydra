@@ -1154,8 +1154,11 @@ async def _run_agent(
 
     # Lazy import agent (heavy, only loaded when needed)
     try:
-        from src.core.agent import Nydra  # noqa: PLC0415
-        doctor = Nydra()
+        def _make_agent():
+            from src.core.agent import Nydra  # noqa: PLC0415
+            return Nydra()
+
+        doctor = await asyncio.to_thread(_make_agent)
     except ImportError:
         log.warning("DataDoctor agent not available — using stub")
         doctor = None
