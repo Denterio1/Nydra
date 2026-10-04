@@ -825,6 +825,92 @@ function OverviewView({ overview }: { overview: NonNullable<JobResultData["overv
   );
 }
 
+function RepairResultView({ info, jobId, token, apiBase }: { info?: any; jobId?: string | null; token?: string | null; apiBase: string }) {
+  const mono = "JetBrains Mono, monospace";
+  const card = { background: "rgba(8,14,27,0.8)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 } as const;
+  const label = { fontSize: 10, letterSpacing: "0.12em", color: "#64748b", fontFamily: mono } as const;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (!info) {
+    return (
+      <div style={{ ...card, color: "#64748b", fontSize: 11, fontFamily: mono }}>
+        No repaired file for this job. Upload a file while the Repair Shop workspace is selected.
+      </div>
+    );
+  }
+
+  const download = async () => {
+    if (!jobId) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${apiBase}/api/v1/jobs/${jobId}/cleaned`, {
+        headers: { Authorization: `Bearer ${token ?? ""}` },
+      });
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cleaned_data.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e.message || "Download failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stats = [
+    { label: "ROWS", value: info.rows_before != null ? `${info.rows_before} -> ${info.rows_after}` : String(info.rows_after), color: "#00d4aa" },
+    { label: "MISSING FILLED", value: String(info.missing_filled ?? 0), color: "#38bdf8" },
+    { label: "DUPLICATES REMOVED", value: String(info.duplicates_removed ?? 0), color: "#f97316" },
+    { label: "COLUMNS", value: String(info.columns ?? "-"), color: "#7c3aed" },
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+        {stats.map((s) => (
+          <div key={s.label} style={{ ...card, padding: "12px 10px", textAlign: "center" }}>
+            <div style={{ fontFamily: "Syne, sans-serif", fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+            <div style={{ ...label, fontSize: 8, marginTop: 4 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ ...card, fontSize: 11, color: "#94a3b8", fontFamily: mono, lineHeight: 1.8 }}>
+        {info.impute_method && <div>imputation method: <span style={{ color: "#e2e8f0" }}>{info.impute_method}</span></div>}
+        <div>outliers are <span style={{ color: "#e2e8f0" }}>kept</span> in the file; review them in Diagnostics, Outliers tab</div>
+        {info.formula_cells_neutralized > 0 && (
+          <div style={{ color: "#fbbf24" }}>
+            {info.formula_cells_neutralized} cell(s) starting with = + - @ were prefixed with a quote to prevent spreadsheet formula injection
+          </div>
+        )}
+      </div>
+
+      <div>
+        <button
+          onClick={download}
+          disabled={busy}
+          style={{
+            padding: "10px 18px", borderRadius: 6, cursor: busy ? "wait" : "pointer",
+            background: "rgba(0,212,170,0.12)", border: "1px solid rgba(0,212,170,0.5)",
+            color: "#00d4aa", fontFamily: mono, fontSize: 11, letterSpacing: "0.1em",
+          }}
+        >
+          {busy ? "DOWNLOADING..." : "DOWNLOAD CLEANED CSV"}
+        </button>
+        {err && <span style={{ marginLeft: 12, fontSize: 11, color: "#f87171", fontFamily: mono }}>{err}</span>}
+      </div>
+    </div>
+  );
+}
+
 function ColumnTable({ columns }: { columns: ColumnStat[] }) {
   const [sortBy, setSortBy] = useState<"name" | "missing_pct">("missing_pct");
   const sorted = [...columns].sort((a, b) =>
@@ -1396,11 +1482,7 @@ export default function Dashboard({
                     )}
                   </div>
                 )}
-                {activeTab === "imputation" && (
-                   <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
-                     <span style={{ fontSize: 10, color: "#475569" }}>SMART IMPUTATION (Transformers/KNN) READY. Select target column to begin.</span>
-                   </div>
-                )}
+                {activeTab === "imputation" && <RepairResultView info={(resultData as any).cleaned_file} jobId={jobId} token={token} apiBase={API_BASE} />}
 
                 {/* --- VISION LAB VIEWS --- */}
                 {activeTab === "gallery" && (
