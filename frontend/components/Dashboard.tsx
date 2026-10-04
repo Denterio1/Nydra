@@ -768,6 +768,63 @@ function OverviewStats({ overview }: { overview: NonNullable<JobResultData["over
   );
 }
 
+function OverviewView({ overview }: { overview: NonNullable<JobResultData["overview"]> }) {
+  const mono = "JetBrains Mono, monospace";
+  const card = { background: "rgba(8,14,27,0.8)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 } as const;
+  const label = { fontSize: 10, letterSpacing: "0.12em", color: "#64748b", fontFamily: mono } as const;
+  const cols = overview.column_stats ?? [];
+
+  const withMissing = cols.filter((c) => c.missing > 0).sort((a, b) => b.missing_pct - a.missing_pct).slice(0, 10);
+
+  const typeCounts: Record<string, number> = {};
+  cols.forEach((c) => {
+    const t = String(c.inferred_type || c.dtype || "unknown");
+    typeCounts[t] = (typeCounts[t] ?? 0) + 1;
+  });
+  const typeEntries = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      
+      <div style={card}>
+        <div style={{ ...label, marginBottom: 10 }}>MISSING VALUES BY COLUMN</div>
+        {withMissing.length === 0 ? (
+          <div style={{ fontSize: 11, color: "#22c55e", fontFamily: mono }}>No missing values in any column.</div>
+        ) : (
+          withMissing.map((c) => (
+            <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span style={{ width: 130, fontSize: 11, color: "#cbd5e1", fontFamily: mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+              <div style={{ flex: 1, height: 8, background: "rgba(51,65,85,0.4)", borderRadius: 4 }}>
+                <div style={{ width: `${Math.min(100, c.missing_pct)}%`, height: "100%", borderRadius: 4, background: c.missing_pct > 20 ? "#f43f5e" : c.missing_pct > 5 ? "#f97316" : "#fbbf24" }} />
+              </div>
+              <span style={{ width: 90, textAlign: "right", fontSize: 10, color: "#94a3b8", fontFamily: mono }}>
+                {c.missing_pct.toFixed(1)}% ({c.missing})
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div style={card}>
+        <div style={{ ...label, marginBottom: 10 }}>COLUMN TYPES</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {typeEntries.map(([t, n]) => (
+            <span key={t} style={{ fontSize: 11, fontFamily: mono, color: "#e2e8f0", border: "1px solid rgba(51,65,85,0.6)", borderRadius: 6, padding: "4px 10px" }}>
+              {t}: <span style={{ color: "#00d4aa" }}>{n}</span>
+            </span>
+          ))}
+        </div>
+        <div style={{ ...label, marginTop: 12 }}>
+          {overview.total_duplicates > 0
+            ? `${overview.total_duplicates.toLocaleString()} duplicate rows (${overview.duplicate_pct.toFixed(1)}%)`
+            : "No duplicate rows."}
+          {" | open the COLUMNS tab for the full table"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ColumnTable({ columns }: { columns: ColumnStat[] }) {
   const [sortBy, setSortBy] = useState<"name" | "missing_pct">("missing_pct");
   const sorted = [...columns].sort((a, b) =>
@@ -1285,9 +1342,7 @@ export default function Dashboard({
                 </div>
 
                 {/* --- DIAGNOSTICS VIEWS --- */}
-                {activeTab === "overview" && resultData.overview && (
-                  <ColumnTable columns={resultData.overview.column_stats} />
-                )}
+                {activeTab === "overview" && resultData.overview && <OverviewView overview={resultData.overview} />}
                 {activeTab === "columns" && resultData.overview && (
                   <ColumnTable columns={resultData.overview.column_stats} />
                 )}
