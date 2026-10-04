@@ -1094,6 +1094,48 @@ def _sanitize_for_json(obj):
     return obj
 
 
+def _save_cleaned_file(result: Dict[str, Any], job_id: str) -> Optional[Dict[str, Any]]:
+    """Save the repaired data (missing values filled + duplicates removed) as CSV.
+
+    Outlier rows are deliberately NOT removed: they stay in the file and are
+    only flagged in the Outliers tab. Never raises; returns None on any failure.
+    """
+    try:
+        import pandas as pd
+        from src.input_sanitizer import neutralize_dataframe
+
+        df = None
+        for key in ("remove_duplicates", "impute"):
+            step = result.get(key)
+            if isinstance(step, dict) and isinstance(step.get("clean_df"), pd.DataFrame):
+                df = step["clean_df"]
+                break
+        if df is None:
+            return None
+
+        safe_df, n_formula = neutralize_dataframe(df)
+        path = REPORT_DIR / f"{Path(job_id).name}_cleaned.csv"
+        safe_df.to_csv(path, index=False, encoding="utf-8-sig")
+
+        imp = result.get("impute") if isinstance(result.get("impute"), dict) else {}
+        ded = result.get("remove_duplicates") if isinstance(result.get("remove_duplicates"), dict) else {}
+        shape_orig = result.get("shape_original")
+        rows_before = int(shape_orig[0]) if shape_orig else None
+        return {
+            "filename": path.name,
+            "rows_before": rows_before,
+            "rows_after": int(len(df)),
+            "columns": int(len(df.columns)),
+            "missing_filled": int(imp.get("filled") or 0),
+            "impute_method": imp.get("method"),
+            "duplicates_removed": int(ded.get("removed") or 0),
+            "formula_cells_neutralized": int(n_formula),
+        }
+    except Exception as exc:
+        log.error("Saving cleaned file failed: %s", type(exc).__name__)
+        return None
+
+
 async def _run_agent(
     goal: JobGoal,
     file_path: Path,
@@ -1151,7 +1193,13 @@ async def _run_agent(
             await tracker.finish_step(db, warnings=[str(exc)])
             # Continue to next step (self-healing)
 
-    return _enrich_result_for_ui(_sanitize_for_json(result))
+    _cleaned_info = None
+    if getattr(goal, "value", goal) == "clean":
+        _cleaned_info = _save_cleaned_file(result, job_id)
+    _final = _enrich_result_for_ui(_sanitize_for_json(result))
+    if _cleaned_info:
+        _final["cleaned_file"] = _cleaned_info
+    return _final
 
 
 def _dispatch_step(
@@ -2376,6 +2424,25 @@ async def get_job_distributions(
 
     _DIST_CACHE[job_id] = payload
     return JSONResponse(content=payload)
+
+
+@app.get("/api/v1/jobs/{job_id}/cleaned", tags=["Jobs"])
+async def download_cleaned_file(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the repaired CSV produced by a 'clean' job."""
+    from fastapi.responses import FileResponse
+    res = await db.execute(
+        select(DBJob).where(DBJob.id == job_id, DBJob.user_id == current_user.id)
+    )
+    if not res.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Job not found")
+    path = REPORT_DIR / f"{Path(job_id).name}_cleaned.csv"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No cleaned file for this job")
+    return FileResponse(path, media_type="text/csv", filename="cleaned_data.csv")
 
 
 @app.delete("/api/v1/jobs/{job_id}", status_code=204, tags=["Jobs"])
