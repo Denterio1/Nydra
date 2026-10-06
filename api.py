@@ -292,7 +292,7 @@ ALLOWED_EXTENSIONS = {
     "csv", "xlsx", "xls", "json", "tsv", "parquet",
     "pdf", "docx", "doc", "txt", "md", "html",
     "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif", "heic",
-    "mp3", "wav", "mp4",
+    "mp3", "wav", "mp4", "zip",
 }
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1571,7 +1571,7 @@ def detect_file_type(filename: str) -> FileType:
         "pdf": FileType.PDF, "docx": FileType.DOCX, "doc": FileType.DOCX,
         "txt": FileType.TXT, "md": FileType.TXT, "html": FileType.TXT,
         "png": FileType.PNG, "jpg": FileType.JPG, "jpeg": FileType.JPG,
-        "webp": FileType.WEBP,
+        "webp": FileType.WEBP, "zip": FileType.ZIP,
     }
     return mapping.get(ext, FileType.CSV)
 

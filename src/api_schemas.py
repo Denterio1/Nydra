@@ -78,6 +78,7 @@ class FileType(str, Enum):
     PNG     = "png"
     JPG     = "jpg"
     WEBP    = "webp"
+    ZIP     = "zip"
 
 
 class Severity(str, Enum):
