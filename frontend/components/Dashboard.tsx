@@ -1730,6 +1730,7 @@ function VisionLabView({ data, tab }: { data: any; tab: string }) {
     return <div style={{ ...card, color: "#ef4444", fontSize: 12 }}>Image analysis failed: {String(data.message || "unknown error")}</div>;
   }
 
+  if (data.mode === "dataset") return <VisionDatasetView data={data} tab={tab} />;
   const q = data.quality || {};
   const img = data.image || {};
   const score = typeof q.score === "number" ? Math.round(q.score) : 0;
@@ -1804,6 +1805,204 @@ function VisionLabView({ data, tab }: { data: any; tab: string }) {
 
   return (
     <div style={{ ...card, textAlign: "center", color: "#475569", fontSize: 11, padding: 40 }}>
+      Object detection is not part of the image analysis yet.
+    </div>
+  );
+}
+
+
+function VisionDatasetView({ data, tab }: { data: any; tab: string }) {
+  const card: any = { background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 };
+  const label: any = { fontSize: 10, letterSpacing: "0.15em", color: "#64748b", fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" };
+  const mono: any = { fontFamily: "'JetBrains Mono', monospace" };
+  const txt = (x: any): string =>
+    typeof x === "string" ? x : x && typeof x === "object" ? String(x.issue || x.title || x.message || "") : String(x ?? "");
+  const colFor = (v: number) => (v >= 70 ? "#10b981" : v >= 40 ? "#f59e0b" : "#ef4444");
+  const list = (a: any): any[] => (Array.isArray(a) ? a : []);
+
+  const counts = data.counts || {};
+  const rd = data.readiness || {};
+  const ql = data.quality || {};
+  const bal = data.balance || {};
+  const dup = data.duplicates || {};
+  const out = data.outliers || {};
+  const sz = data.sizes || {};
+  const col = data.color || {};
+  const score = typeof rd.score === "number" && rd.score === rd.score ? Math.round(rd.score) : 0;
+  const sc = colFor(score);
+
+  const Stat = ({ k, v }: { k: string; v: any }) => (
+    <div style={card}>
+      <div style={label}>{k}</div>
+      <div style={{ ...mono, fontSize: 22, fontWeight: 700, color: "#e2e8f0", marginTop: 4 }}>{String(v ?? "-")}</div>
+    </div>
+  );
+  const Recs = ({ items }: { items: any }) =>
+    list(items).length === 0 ? null : (
+      <ul style={{ margin: "10px 0 0", paddingLeft: 18, fontSize: 12, color: "#94a3b8" }}>
+        {list(items).map((r, i) => <li key={i} style={{ marginBottom: 4 }}>{txt(r)}</li>)}
+      </ul>
+    );
+
+  if (tab === "gallery") {
+    const subs: any = rd.sub_scores || {};
+    const subKeys = Object.keys(subs).filter((k) => typeof subs[k] === "number");
+    const items = list(data.gallery);
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+          <div style={card}>
+            <div style={label}>ML readiness</div>
+            <div style={{ ...mono, fontSize: 36, fontWeight: 700, color: sc, lineHeight: 1.1 }}>{score}<span style={{ fontSize: 14, color: "#64748b" }}>/100</span></div>
+            <div style={{ fontSize: 12, color: sc }}>{txt(rd.verdict)} {rd.grade ? "(" + String(rd.grade) + ")" : ""}</div>
+          </div>
+          <Stat k="Images found" v={counts.found} />
+          <Stat k="Readable" v={counts.readable} />
+          <Stat k="Unreadable" v={counts.unreadable} />
+          <Stat k="Classes" v={counts.classes} />
+        </div>
+        {data.truncated && (
+          <div style={{ ...card, fontSize: 11, color: "#f59e0b" }}>Large dataset: only a sample of the images was analyzed.</div>
+        )}
+        {subKeys.length > 0 && (
+          <div style={card}>
+            <div style={{ ...label, marginBottom: 10 }}>Readiness breakdown</div>
+            {subKeys.map((k) => {
+              const v = Math.max(0, Math.min(100, subs[k]));
+              return (
+                <div key={k} style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, color: "#94a3b8", textTransform: "capitalize" }}>{k.replace(/_/g, " ")}</span>
+                  <div style={{ height: 8, background: "rgba(51,65,85,0.5)", borderRadius: 4 }}>
+                    <div style={{ width: v + "%", height: 8, background: colFor(v), borderRadius: 4 }} />
+                  </div>
+                  <span style={{ ...mono, fontSize: 11, color: "#e2e8f0", textAlign: "right" }}>{Math.round(subs[k])}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {list(rd.ranked).length > 0 && (
+          <div style={card}>
+            <div style={{ ...label, marginBottom: 6 }}>Fix first</div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#94a3b8" }}>
+              {list(rd.ranked).slice(0, 6).map((r, i) => (
+                <li key={i} style={{ marginBottom: 4 }}>{txt(r)}{r && r.impact ? " (impact: " + String(r.impact) + ")" : ""}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Lowest and highest scoring images</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 10 }}>
+            {items.map((g, i) => (
+              <div key={i} style={{ textAlign: "center" }}>
+                <div style={{ height: 96, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(2,6,23,0.6)", borderRadius: 6, overflow: "hidden" }}>
+                  {g.thumbnail ? <img src={g.thumbnail} alt={String(g.name || "")} style={{ maxWidth: "100%", maxHeight: 96 }} /> : <span style={{ fontSize: 10, color: "#ef4444" }}>unreadable</span>}
+                </div>
+                <div style={{ ...mono, fontSize: 10, color: "#94a3b8", marginTop: 4, wordBreak: "break-all" }}>{String(g.name || "")}</div>
+                <div style={{ ...mono, fontSize: 10, color: g.unreadable ? "#ef4444" : colFor(Number(g.score)) }}>
+                  {g.unreadable ? "unreadable" : Math.round(Number(g.score)) + " · " + String(g.label || "")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (tab === "quality") {
+    const classCounts: any = bal.class_counts || {};
+    const classKeys = Object.keys(classCounts);
+    const maxCount = Math.max(1, ...classKeys.map((k) => Number(classCounts[k]) || 0));
+    const flags: [string, any][] = [
+      ["Blurry", ql.blurry], ["Dark", ql.dark], ["Overexposed", ql.overexposed], ["Noisy", ql.noisy],
+      ["Artifacts", ql.artifacts], ["Low resolution", ql.low_res], ["Rejected", ql.rejected],
+    ];
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Quality overview</div>
+          <div style={{ display: "flex", gap: 22, flexWrap: "wrap", ...mono, fontSize: 12, color: "#cbd5e1" }}>
+            <span>mean score: {typeof ql.mean === "number" ? Math.round(ql.mean) : "-"}</span>
+            <span>high: {String(ql.high ?? 0)}</span>
+            <span>medium: {String(ql.medium ?? 0)}</span>
+            <span>low: {String(ql.low ?? 0)}</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+            {flags.filter(([, v]) => Number(v) > 0).map(([k, v]) => (
+              <span key={k} style={{ ...mono, fontSize: 10, padding: "3px 8px", borderRadius: 4, background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}>{k}: {String(v)}</span>
+            ))}
+          </div>
+          <Recs items={ql.recommendations} />
+        </div>
+
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Class balance {typeof bal.imbalance_ratio === "number" ? "(imbalance ratio " + bal.imbalance_ratio.toFixed(1) + ")" : ""}</div>
+          {classKeys.length === 0 && <div style={{ fontSize: 11, color: "#475569" }}>No class folders found.</div>}
+          {classKeys.map((k) => {
+            const v = Number(classCounts[k]) || 0;
+            return (
+              <div key={k} style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: "#94a3b8" }}>{k}</span>
+                <div style={{ height: 8, background: "rgba(51,65,85,0.5)", borderRadius: 4 }}>
+                  <div style={{ width: (v / maxCount) * 100 + "%", height: 8, background: "#38bdf8", borderRadius: 4 }} />
+                </div>
+                <span style={{ ...mono, fontSize: 11, color: "#e2e8f0", textAlign: "right" }}>{v}</span>
+              </div>
+            );
+          })}
+          <Recs items={bal.recommendations} />
+        </div>
+
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Duplicates</div>
+          <div style={{ ...mono, fontSize: 12, color: "#cbd5e1" }}>
+            exact: {String(dup.exact_flagged ?? 0)} · near-duplicate pairs: {list(dup.pairs).length}
+            {typeof dup.redundancy_rate === "number" ? " · redundancy: " + (dup.redundancy_rate * (dup.redundancy_rate <= 1 ? 100 : 1)).toFixed(1) + "%" : ""}
+          </div>
+          {list(dup.pairs).slice(0, 10).map((pr, i) => (
+            <div key={i} style={{ ...mono, fontSize: 11, color: "#94a3b8", marginTop: 6, wordBreak: "break-all" }}>
+              {String(pr.a)} = {String(pr.b)}{typeof pr.similarity === "number" ? " (" + pr.similarity.toFixed(2) + ")" : ""}
+            </div>
+          ))}
+          <Recs items={dup.recommendations} />
+        </div>
+
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Outlier images ({list(out.images).length})</div>
+          {list(out.images).slice(0, 15).map((o, i) => (
+            <div key={i} style={{ ...mono, fontSize: 11, color: "#94a3b8", marginBottom: 4, wordBreak: "break-all" }}>
+              {String(o.name)} <span style={{ color: "#f59e0b" }}>[{list(o.flagged_by).join(", ")}]</span>
+            </div>
+          ))}
+          <Recs items={out.recommendations} />
+        </div>
+
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Sizes and color</div>
+          <div style={{ ...mono, fontSize: 12, color: "#cbd5e1" }}>
+            {sz.recommended_target_size ? "recommended size: " + (Array.isArray(sz.recommended_target_size) ? sz.recommended_target_size.join(" x ") : String(sz.recommended_target_size)) : ""}
+            {sz.dominant_aspect_ratio ? " · aspect: " + String(sz.dominant_aspect_ratio) : ""}
+            {" · color bias: " + (col.bias_detected ? "yes (" + String(col.severity || "") + ")" : "no")}
+          </div>
+          <Recs items={[...list(sz.recommendations), ...list(col.recommendations)]} />
+        </div>
+
+        {list(data.unreadable_files).length > 0 && (
+          <div style={card}>
+            <div style={{ ...label, marginBottom: 8 }}>Unreadable files</div>
+            {list(data.unreadable_files).slice(0, 15).map((f, i) => (
+              <div key={i} style={{ ...mono, fontSize: 11, color: "#ef4444", wordBreak: "break-all" }}>{txt(f.name || f)}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...card, textAlign: "center", color: "#475569", fontSize: 11 }}>
       Object detection is not part of the image analysis yet.
     </div>
   );
