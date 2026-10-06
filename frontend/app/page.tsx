@@ -175,7 +175,7 @@ useEffect(() => {
       if (result.mode === "single") {
         const _ext = String(result.file.filename || "").split(".").pop()?.toLowerCase() || "";
         const _isDoc = ["pdf", "docx", "doc", "txt", "md", "html"].includes(_ext);
-        const _isImg = ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif", "heic"].includes(_ext);
+        const _isImg = ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif", "heic", "zip"].includes(_ext);
         currentGoal =
           activeWorkspace === "REPAIR_SHOP" ? "clean"
           : activeWorkspace === "TEXT_INTELLIGENCE" && _isDoc ? "text_docs"
