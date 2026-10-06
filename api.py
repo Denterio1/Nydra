@@ -1200,7 +1200,72 @@ async def _run_text_docs(file_path: Path, tracker: StepTracker, db: AsyncSession
     return _sanitize_for_json(result)
 
 
+async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
+    # images goal, zip upload: safe extract, then dataset-level report
+    from src.vision_ui import build_dataset_report  # noqa: PLC0415
+    from src.zip_safe import extract_image_zip, UnsafeZipError  # noqa: PLC0415
+    import contextlib, io  # noqa: PLC0415
+
+    def _quiet_dataset(root: str, name: str):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return build_dataset_report(root, name, 150)
+
+    report: Dict[str, Any] = {"status": "error", "message": "Report was not produced."}
+    for i, _step in enumerate(tracker.steps):
+        await tracker.start_step(db)
+        await asyncio.sleep(0)
+        if i == 0:
+            try:
+                dest = UPLOAD_DIR / "_zip" / file_path.stem
+                ex = await asyncio.to_thread(extract_image_zip, file_path, dest)
+                report = await asyncio.to_thread(_quiet_dataset, str(ex.dataset_root), file_path.name)
+                if isinstance(report, dict):
+                    report["extract"] = {"extracted": ex.extracted, "total_bytes": ex.total_bytes, "skipped": ex.skipped}
+            except UnsafeZipError as exc:
+                report = {"status": "error", "message": str(exc)}
+            except Exception as exc:
+                log.warning("Dataset report failed: %s", type(exc).__name__)
+                report = {"status": "error", "message": "Dataset analysis failed: %s" % type(exc).__name__}
+        await tracker.finish_step(db)
+
+    result: Dict[str, Any] = {"vision_report": report}
+    if isinstance(report, dict) and report.get("status") == "ok":
+        rd = report.get("readiness") or {}
+        raw_score = rd.get("score")
+        score = int(round(raw_score)) if isinstance(raw_score, (int, float)) and raw_score == raw_score else 0
+        if score >= 80:
+            verdict, grade = "ready", "A" if score >= 90 else "B"
+        elif score >= 50:
+            verdict, grade = "needs_work", "C" if score >= 65 else "D"
+        else:
+            verdict, grade = "not_ready", "F"
+        issues = []
+        for n, it in enumerate((rd.get("priority_issues") or [])[:20]):
+            title = str(it.get("issue") or it.get("title") or it) if isinstance(it, dict) else str(it)
+            issues.append({
+                "issue_id": "ds-%d" % n, "code": "dataset_issue", "title": title[:200],
+                "description": title, "severity": "high" if n < 3 else "medium",
+                "affected_columns": [], "suggestion": "", "auto_fixable": False,
+            })
+        subs = rd.get("sub_scores") or {}
+        result["ml_readiness"] = {"score": score}
+        result["issues"] = issues
+        result["quality"] = {
+            "overall_score": score, "verdict": verdict, "grade": grade,
+            "dimensions": [
+                {"name": str(k), "score": v, "weight": 0, "issues": []}
+                for k, v in subs.items() if isinstance(v, (int, float))
+            ],
+            "critical_issues": [x["title"] for x in issues[:3]],
+            "fix_checklist": [x["title"] for x in issues[:8]],
+            "estimated_model_impact": "",
+        }
+    return _sanitize_for_json(result)
+
+
 async def _run_images(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
+    if file_path.suffix.lower() == ".zip":
+        return await _run_images_zip(file_path, tracker, db)
     # images goal: single-image quality report for the Vision Lab workspace
     from src.vision_ui import build_single_report  # noqa: PLC0415
 
