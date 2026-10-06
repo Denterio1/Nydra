@@ -173,7 +173,14 @@ useEffect(() => {
       let currentFilename = "";
 
       if (result.mode === "single") {
-        currentGoal = activeWorkspace === "REPAIR_SHOP" ? "clean" : "inspect";
+        const _ext = String(result.file.filename || "").split(".").pop()?.toLowerCase() || "";
+        const _isDoc = ["pdf", "docx", "doc", "txt", "md", "html"].includes(_ext);
+        const _isImg = ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif", "heic"].includes(_ext);
+        currentGoal =
+          activeWorkspace === "REPAIR_SHOP" ? "clean"
+          : activeWorkspace === "TEXT_INTELLIGENCE" && _isDoc ? "text_docs"
+          : activeWorkspace === "VISION_LAB" && _isImg ? "images"
+          : "inspect";
         currentFilename = result.file.filename;
         jobRequest = {
           file_id: result.file.file_id,

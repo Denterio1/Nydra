@@ -1136,6 +1136,130 @@ def _save_cleaned_file(result: Dict[str, Any], job_id: str) -> Optional[Dict[str
         return None
 
 
+async def _run_text_docs(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
+    """text_docs goal: read PDF/DOCX/TXT and build the Text Intelligence report."""
+    from src.text_ui import build_text_report_from_file  # noqa: PLC0415
+
+    report: Dict[str, Any] = {"status": "error", "message": "Report was not produced."}
+    for i, _step in enumerate(tracker.steps):
+        await tracker.start_step(db)
+        await asyncio.sleep(0)
+        if i == 0:
+            try:
+                report = await asyncio.to_thread(
+                    build_text_report_from_file, str(file_path), file_path.name
+                )
+            except Exception as exc:
+                log.warning("Text report failed: %s", type(exc).__name__)
+                report = {"status": "error", "message": "Text analysis failed: %s" % type(exc).__name__}
+        await tracker.finish_step(db)
+
+    result: Dict[str, Any] = {"text_report": report}
+    if report.get("status") == "success":
+        q = report.get("quality") or {}
+        raw_score = q.get("score")
+        score = int(round(raw_score)) if isinstance(raw_score, (int, float)) else None
+        if score is None:
+            verdict, grade = "not_ready", "F"
+        elif score >= 80:
+            verdict, grade = "ready", "A" if score >= 90 else "B"
+        elif score >= 50:
+            verdict, grade = "needs_work", "C" if score >= 65 else "D"
+        else:
+            verdict, grade = "not_ready", "F"
+        sev_map = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
+        issues = []
+        for n, it in enumerate(q.get("issues") or []):
+            if not isinstance(it, dict):
+                continue
+            issues.append({
+                "issue_id": "txt-%d" % n,
+                "code": str(it.get("issue_type") or "text_issue"),
+                "title": str(it.get("issue_type") or "Text issue").replace("_", " ").title(),
+                "description": str(it.get("description") or it.get("message") or it.get("checker") or ""),
+                "severity": sev_map.get(str(it.get("severity") or "").lower(), "medium"),
+                "affected_columns": [],
+                "suggestion": str(it.get("suggestion") or it.get("recommendation") or ""),
+                "auto_fixable": False,
+            })
+        result["ml_readiness"] = {"score": score}
+        result["issues"] = issues
+        result["quality"] = {
+            "overall_score": score,
+            "verdict": verdict,
+            "grade": grade,
+            "dimensions": [
+                {"name": str(k), "score": v, "weight": 0, "issues": []}
+                for k, v in (q.get("breakdown") or {}).items()
+                if isinstance(v, (int, float))
+            ],
+            "critical_issues": [x["title"] for x in issues if x["severity"] == "critical"],
+            "fix_checklist": [x["title"] for x in issues[:8]],
+            "estimated_model_impact": "",
+        }
+    return _sanitize_for_json(result)
+
+
+async def _run_images(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
+    # images goal: single-image quality report for the Vision Lab workspace
+    from src.vision_ui import build_single_report  # noqa: PLC0415
+
+    report: Dict[str, Any] = {"status": "error", "message": "Report was not produced."}
+    for i, _step in enumerate(tracker.steps):
+        await tracker.start_step(db)
+        await asyncio.sleep(0)
+        if i == 0:
+            try:
+                report = await asyncio.to_thread(build_single_report, str(file_path), file_path.name)
+            except Exception as exc:
+                log.warning("Image report failed: %s", type(exc).__name__)
+                report = {"status": "error", "message": "Image analysis failed: %s" % type(exc).__name__}
+        await tracker.finish_step(db)
+
+    result: Dict[str, Any] = {"vision_report": report}
+    if report.get("status") == "ok":
+        q = report.get("quality") or {}
+        raw_score = q.get("score")
+        score = int(round(raw_score)) if isinstance(raw_score, (int, float)) else 0
+        if score >= 80:
+            verdict, grade = "ready", "A" if score >= 90 else "B"
+        elif score >= 50:
+            verdict, grade = "needs_work", "C" if score >= 65 else "D"
+        else:
+            verdict, grade = "not_ready", "F"
+        fix = str(q.get("suggested_fix") or "")
+        issues = []
+        if report.get("rejected"):
+            issues.append({
+                "issue_id": "img-reject", "code": "image_unreadable", "title": "Image could not be read",
+                "description": str(report.get("message") or "File is corrupted or not a valid image."),
+                "severity": "critical", "affected_columns": [], "suggestion": "Replace or remove this file.",
+                "auto_fixable": False,
+            })
+        for n, it in enumerate(report.get("issues") or []):
+            title = str(it.get("title") or "Image issue")
+            issues.append({
+                "issue_id": "img-%d" % n, "code": title.lower().replace(" ", "_"), "title": title,
+                "description": str(it.get("description") or ""),
+                "severity": str(it.get("severity") or "medium"),
+                "affected_columns": [], "suggestion": fix, "auto_fixable": False,
+            })
+        result["ml_readiness"] = {"score": score}
+        result["issues"] = issues
+        result["quality"] = {
+            "overall_score": score, "verdict": verdict, "grade": grade,
+            "dimensions": [
+                {"name": str(k), "score": v, "weight": 0, "issues": []}
+                for k, v in (report.get("metrics") or {}).items()
+                if isinstance(v, (int, float))
+            ],
+            "critical_issues": [x["title"] for x in issues if x["severity"] == "critical"],
+            "fix_checklist": [x["title"] for x in issues[:8]],
+            "estimated_model_impact": "",
+        }
+    return _sanitize_for_json(result)
+
+
 async def _run_agent(
     goal: JobGoal,
     file_path: Path,
@@ -1148,6 +1272,11 @@ async def _run_agent(
     Runs in executor to avoid blocking the event loop during heavy computation.
     """
     loop = asyncio.get_event_loop()
+    if getattr(goal, "value", goal) == "text_docs":
+        return await _run_text_docs(file_path, tracker, db)
+    if getattr(goal, "value", goal) == "images":
+        return await _run_images(file_path, tracker, db)
+
 
     async def emit(progress: int, message: str) -> None:
         await tracker.emit_progress(progress, message)
@@ -1522,6 +1651,15 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
         await create_audit_tables(conn)
     await job_queue.start()
+    def _warm_text_models() -> None:
+        try:
+            from src.text_ui import build_text_report  # noqa: PLC0415
+            build_text_report('Warm up. This is a short sample sentence for the models. It loads them once at startup.')
+            log.info('Text models warmed up')
+        except Exception as exc:
+            log.warning('Text warm-up skipped: %s', type(exc).__name__)
+    import threading as _threading
+    _threading.Thread(target=_warm_text_models, daemon=True, name='text-warmup').start()
     log.info("✅ Database ready | ✅ Job queue running (%d workers)", WORKER_COUNT)
     yield
     # ── Shutdown ──────────────────────────────────────────────────────────

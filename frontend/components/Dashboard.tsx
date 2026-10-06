@@ -636,6 +636,205 @@ function DistributionsView({ jobId, token, apiBase }: { jobId?: string | null; t
   );
 }
 
+const TI_CARD: React.CSSProperties = {
+  background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)",
+  borderRadius: 10, padding: 16, marginBottom: 12,
+};
+const TI_LABEL: React.CSSProperties = {
+  fontSize: 10, letterSpacing: "0.15em", color: "#64748b",
+  textTransform: "uppercase", marginBottom: 8,
+};
+
+function TiBar({ label, value, color }: { label: string; value: number; color?: string }) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#94a3b8" }}>
+        <span>{label}</span><span>{v.toFixed(0)}</span>
+      </div>
+      <div style={{ height: 6, background: "rgba(51,65,85,0.5)", borderRadius: 3 }}>
+        <div style={{ width: v + "%", height: 6, borderRadius: 3, background: color || "#38bdf8" }} />
+      </div>
+    </div>
+  );
+}
+
+function TiChip({ text }: { text: string }) {
+  return (
+    <span style={{ display: "inline-block", fontSize: 11, color: "#e2e8f0", padding: "3px 8px",
+      margin: "0 6px 6px 0", borderRadius: 6, background: "rgba(56,189,248,0.12)",
+      border: "1px solid rgba(56,189,248,0.25)" }}>{text}</span>
+  );
+}
+
+function TextIntelligenceView({ data, tab }: { data?: any; tab: string }) {
+  if (!data) {
+    return <div style={{ ...TI_CARD, textAlign: "center", fontSize: 10, color: "#475569" }}>Waiting for text analysis...</div>;
+  }
+  if (data.status !== "success") {
+    return <div style={{ ...TI_CARD, fontSize: 12, color: "#f87171" }}>{String(data.message || "Text analysis failed.")}</div>;
+  }
+  const lang = data.language || {};
+  const st = data.stats || {};
+  const q = data.quality || {};
+  const intel = data.intelligence || {};
+  const full = !!lang.fully_supported;
+  const scoreColor = q.score == null ? "#64748b" : q.score >= 80 ? "#34d399" : q.score >= 50 ? "#fbbf24" : "#f87171";
+
+  const notices = (
+    <>
+      {!full && (
+        <div style={{ ...TI_CARD, fontSize: 11, color: "#fbbf24" }}>
+          Detected language: {String(lang.name || lang.code)}. Only language-neutral checks are scored.
+          {(data.hidden || []).map((h: any, i: number) => (
+            <div key={i} style={{ color: "#94a3b8", marginTop: 4 }}>{"• " + h.section + " not shown. " + h.reason}</div>
+          ))}
+        </div>
+      )}
+      {data.truncated && (
+        <div style={{ ...TI_CARD, fontSize: 11, color: "#fbbf24" }}>Long document: only the first 30,000 characters were analyzed.</div>
+      )}
+    </>
+  );
+
+  if (tab === "analysis") {
+    const bd = q.breakdown || {};
+    const statItems: [string, any][] = [
+      ["Words", st.word_count], ["Sentences", st.sentence_count], ["Paragraphs", st.paragraph_count],
+      ["Characters", st.char_count], ["Avg word length", st.avg_word_length],
+      ["Avg sentence length", st.avg_sentence_length], ["Vocabulary", st.vocabulary_size],
+    ];
+    return (
+      <div>
+        <div style={{ ...TI_CARD, display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <div style={TI_LABEL}>Quality score</div>
+            <div style={{ fontSize: 36, fontWeight: 700, color: scoreColor }}>{q.score == null ? "N/A" : Math.round(q.score)}</div>
+            <div style={{ fontSize: 11, color: "#94a3b8" }}>{q.verdict || ""}</div>
+          </div>
+          <div>
+            <div style={TI_LABEL}>Language</div>
+            <div style={{ fontSize: 16, color: "#e2e8f0" }}>{String(lang.name || lang.code || "unknown")}</div>
+            <div style={{ fontSize: 10, color: "#64748b" }}>{String(lang.script || "")} {lang.confidence != null ? "· " + Math.round(lang.confidence * 100) + "%" : ""}</div>
+          </div>
+          <div>
+            <div style={TI_LABEL}>Analyzed in</div>
+            <div style={{ fontSize: 16, color: "#e2e8f0" }}>{data.seconds}s</div>
+          </div>
+        </div>
+        {notices}
+        <div style={TI_CARD}>
+          <div style={TI_LABEL}>Document statistics</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
+            {statItems.map(([k, v]) => (
+              <div key={k}>
+                <div style={{ fontSize: 10, color: "#64748b" }}>{k}</div>
+                <div style={{ fontSize: 15, color: "#e2e8f0" }}>{v == null ? "-" : String(v)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={TI_CARD}>
+          <div style={TI_LABEL}>Score breakdown</div>
+          {(q.scored_on || []).map((k: string) =>
+            typeof bd[k] === "number" ? <TiBar key={k} label={k.replace(/_score$/, "").replace(/_/g, " ")} value={bd[k]} /> : null
+          )}
+        </div>
+        <div style={TI_CARD}>
+          <div style={TI_LABEL}>Issues ({q.issue_count || 0})</div>
+          {(q.issues || []).length === 0 && <div style={{ fontSize: 11, color: "#34d399" }}>No issues found.</div>}
+          {(q.issues || []).slice(0, 12).map((it: any, i: number) => (
+            <div key={i} style={{ fontSize: 11, color: "#cbd5e1", padding: "4px 0", borderTop: i ? "1px solid rgba(51,65,85,0.4)" : "none" }}>
+              <span style={{ color: "#fbbf24" }}>{String(it.severity || "")}</span>{" "}
+              {String(it.issue_type || "issue").replace(/_/g, " ")}
+              <span style={{ color: "#64748b" }}> {it.checker ? "(" + it.checker + ")" : ""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (tab === "entities") {
+    const byType = intel.entities || {};
+    const pii = (intel.pii || {}).by_type || {};
+    const contact = intel.contact_info || [];
+    const kws = intel.keywords || [];
+    return (
+      <div>
+        {notices}
+        {full ? (
+          <>
+            <div style={TI_CARD}>
+              <div style={TI_LABEL}>Entities</div>
+              {Object.keys(byType).length === 0 && <div style={{ fontSize: 11, color: "#64748b" }}>None found.</div>}
+              {Object.keys(byType).map((t) => (
+                <div key={t} style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 4 }}>{t}</div>
+                  {(Array.isArray(byType[t]) ? byType[t] : []).slice(0, 20).map((e: any, i: number) => <TiChip key={i} text={String(e)} />)}
+                </div>
+              ))}
+            </div>
+            <div style={TI_CARD}>
+              <div style={TI_LABEL}>Keywords</div>
+              {kws.length === 0 && <div style={{ fontSize: 11, color: "#64748b" }}>None found.</div>}
+              {kws.map((k: any, i: number) => <TiChip key={i} text={String(k.keyword)} />)}
+            </div>
+            <div style={TI_CARD}>
+              <div style={TI_LABEL}>Personal data found</div>
+              {Object.keys(pii).length === 0 && <div style={{ fontSize: 11, color: "#34d399" }}>None detected.</div>}
+              {Object.keys(pii).map((k) => <TiChip key={k} text={k + ": " + pii[k]} />)}
+            </div>
+          </>
+        ) : (
+          <div style={TI_CARD}>
+            <div style={TI_LABEL}>Contact info found</div>
+            {contact.length === 0 && <div style={{ fontSize: 11, color: "#64748b" }}>None found.</div>}
+            {contact.map((c: any, i: number) => <TiChip key={i} text={String(c.label) + ": " + String(c.text)} />)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const sent = intel.sentiment;
+  const rd = intel.readability || {};
+  const coh = intel.coherence || {};
+  const sp = intel.spelling || {};
+  return (
+    <div>
+      {notices}
+      {full && sent ? (
+        <>
+          <div style={TI_CARD}>
+            <div style={TI_LABEL}>Sentiment: {String(sent.dominant || "")}</div>
+            <TiBar label="positive" value={(sent.positive || 0) * 100} color="#34d399" />
+            <TiBar label="negative" value={(sent.negative || 0) * 100} color="#f87171" />
+            <TiBar label="neutral" value={(sent.neutral || 0) * 100} color="#94a3b8" />
+          </div>
+          <div style={TI_CARD}>
+            <div style={TI_LABEL}>Readability</div>
+            <div style={{ fontSize: 15, color: "#e2e8f0" }}>{rd.score == null ? "-" : Math.round(rd.score)} · {String(rd.grade || "")}</div>
+            <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>Style: {String(intel.style || "-")}</div>
+          </div>
+          <div style={TI_CARD}>
+            <div style={TI_LABEL}>Coherence</div>
+            <div style={{ fontSize: 15, color: "#e2e8f0" }}>{coh.score == null ? "-" : Math.round(coh.score)}</div>
+            {!coh.reliable && <div style={{ fontSize: 10, color: "#fbbf24", marginTop: 4 }}>Short text (under 100 words): this score is not reliable.</div>}
+          </div>
+          <div style={TI_CARD}>
+            <div style={TI_LABEL}>Spelling</div>
+            <div style={{ fontSize: 15, color: "#e2e8f0" }}>{sp.error_rate == null ? "-" : (sp.error_rate * 100).toFixed(1) + "% flagged"}</div>
+            <div style={{ marginTop: 6 }}>{(sp.errors || []).map((e: any, i: number) => <TiChip key={i} text={String(e)} />)}</div>
+          </div>
+        </>
+      ) : (
+        <div style={{ ...TI_CARD, fontSize: 11, color: "#64748b" }}>Sentiment and readability are not available for this language.</div>
+      )}
+    </div>
+  );
+}
+
 function OutliersView({ data }: { data?: any }) {
   const mono = "JetBrains Mono, monospace";
   const card = { background: "rgba(8,14,27,0.8)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 } as const;
@@ -1485,17 +1684,18 @@ export default function Dashboard({
                 {activeTab === "imputation" && <RepairResultView info={(resultData as any).cleaned_file} jobId={jobId} token={token} apiBase={API_BASE} />}
 
                 {/* --- VISION LAB VIEWS --- */}
-                {activeTab === "gallery" && (
+                {(activeTab === "gallery" || activeTab === "quality" || activeTab === "detections") && (resultData as any).vision_report && (
+                  <VisionLabView data={(resultData as any).vision_report} tab={activeTab} />
+                )}
+                {activeTab === "gallery" && !(resultData as any).vision_report && (
                    <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
                      <span style={{ fontSize: 10, color: "#475569" }}>VISION GALLERY ACTIVE. {resultData.overview?.file_type?.includes("csv") ? "(Not available for tabular data)" : "Waiting for image stream..."}</span>
                    </div>
                 )}
 
                 {/* --- TEXT INTEL VIEWS --- */}
-                {activeTab === "analysis" && (
-                   <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
-                     <span style={{ fontSize: 10, color: "#475569" }}>NLP INTELLIGENCE ACTIVE. {resultData.overview?.file_type?.includes("csv") ? "Select a text column to run PII and Sentiment audit." : "Analyzing document structure..."}</span>
-                   </div>
+                {(activeTab === "analysis" || activeTab === "entities" || activeTab === "sentiment") && (
+                   <TextIntelligenceView data={(resultData as any).text_report} tab={activeTab} />
                 )}
               </div>
             </>
@@ -1513,6 +1713,98 @@ export default function Dashboard({
           Waiting for job to start...
         </div>
       )}
+    </div>
+  );
+}
+
+
+function VisionLabView({ data, tab }: { data: any; tab: string }) {
+  const card: any = { background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 };
+  const label: any = { fontSize: 10, letterSpacing: "0.15em", color: "#64748b", fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" };
+  const mono: any = { fontFamily: "'JetBrains Mono', monospace" };
+  const sevColor: any = { critical: "#ef4444", high: "#f97316", medium: "#f59e0b", low: "#38bdf8" };
+  const verdictColor: any = { high: "#10b981", medium: "#f59e0b", low: "#ef4444", reject: "#ef4444" };
+
+  if (!data) return <div style={{ ...card, textAlign: "center", color: "#475569", fontSize: 11 }}>Waiting for image analysis...</div>;
+  if (data.status !== "ok") {
+    return <div style={{ ...card, color: "#ef4444", fontSize: 12 }}>Image analysis failed: {String(data.message || "unknown error")}</div>;
+  }
+
+  const q = data.quality || {};
+  const img = data.image || {};
+  const score = typeof q.score === "number" ? Math.round(q.score) : 0;
+  const vcol = verdictColor[String(q.verdict || "")] || "#94a3b8";
+  const issues: any[] = Array.isArray(data.issues) ? data.issues : [];
+  const metrics: any = data.metrics || {};
+
+  if (tab === "gallery") {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(200px, 280px) 1fr", gap: 16 }}>
+        <div style={{ ...card, display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200 }}>
+          {data.thumbnail
+            ? <img src={data.thumbnail} alt={String(data.name || "image")} style={{ maxWidth: "100%", maxHeight: 260, borderRadius: 6 }} />
+            : <span style={{ fontSize: 11, color: "#475569" }}>No preview available</span>}
+        </div>
+        <div style={card}>
+          <div style={label}>Image</div>
+          <div style={{ ...mono, fontSize: 13, color: "#e2e8f0", margin: "4px 0 14px", wordBreak: "break-all" }}>{String(data.name || "")}</div>
+          <div style={label}>Quality score</div>
+          <div style={{ ...mono, fontSize: 36, fontWeight: 700, color: vcol, lineHeight: 1.1 }}>{score}<span style={{ fontSize: 14, color: "#64748b" }}>/100</span></div>
+          <div style={{ fontSize: 13, color: vcol, margin: "4px 0 14px" }}>{String(q.verdict_label || q.verdict || "")}</div>
+          {data.rejected && (
+            <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 12 }}>{String(data.message || "This file could not be read as an image.")}</div>
+          )}
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", fontSize: 11, color: "#94a3b8", ...mono }}>
+            {img.width ? <span>{img.width} x {img.height} px</span> : null}
+            {img.exposure ? <span>exposure: {String(img.exposure)}</span> : null}
+            {typeof data.seconds === "number" ? <span>{data.seconds}s</span> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (tab === "quality") {
+    const keys = Object.keys(metrics).filter((k) => typeof metrics[k] === "number");
+    return (
+      <div style={{ display: "grid", gap: 16 }}>
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Quality metrics (higher is better)</div>
+          {keys.length === 0 && <div style={{ fontSize: 11, color: "#475569" }}>No metrics (file could not be read).</div>}
+          {keys.map((k) => {
+            const v = Math.max(0, Math.min(100, metrics[k]));
+            const col = v >= 70 ? "#10b981" : v >= 40 ? "#f59e0b" : "#ef4444";
+            return (
+              <div key={k} style={{ display: "grid", gridTemplateColumns: "130px 1fr 44px", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, color: "#94a3b8", textTransform: "capitalize" }}>{k.replace("_score", "").replace(/_/g, " ")}</span>
+                <div style={{ height: 8, background: "rgba(51,65,85,0.5)", borderRadius: 4 }}>
+                  <div style={{ width: v + "%", height: 8, background: col, borderRadius: 4 }} />
+                </div>
+                <span style={{ ...mono, fontSize: 11, color: "#e2e8f0", textAlign: "right" }}>{Math.round(metrics[k])}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={card}>
+          <div style={{ ...label, marginBottom: 10 }}>Issues ({issues.length})</div>
+          {issues.length === 0 && <div style={{ fontSize: 11, color: "#10b981" }}>No issues flagged.</div>}
+          {issues.map((it, i) => (
+            <div key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", marginBottom: 8 }}>
+              <span style={{ ...mono, fontSize: 9, letterSpacing: "0.1em", color: sevColor[String(it.severity)] || "#94a3b8", border: "1px solid " + (sevColor[String(it.severity)] || "#475569"), borderRadius: 4, padding: "1px 6px" }}>{String(it.severity || "").toUpperCase()}</span>
+              <span style={{ fontSize: 12, color: "#e2e8f0" }}>{String(it.title || "")}</span>
+              <span style={{ fontSize: 11, color: "#64748b" }}>{String(it.description || "")}</span>
+            </div>
+          ))}
+          {q.reject_reason && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>Main problem: {String(q.reject_reason)}</div>}
+          {q.suggested_fix && <div style={{ ...mono, fontSize: 11, color: "#38bdf8", marginTop: 6 }}>Suggested fix: {String(q.suggested_fix)}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...card, textAlign: "center", color: "#475569", fontSize: 11, padding: 40 }}>
+      Object detection is not part of the image analysis yet.
     </div>
   );
 }
