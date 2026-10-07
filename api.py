@@ -2405,6 +2405,152 @@ async def upload_multi(
     return MultiUploadResponse(train_file=train_info, test_file=test_info)
 
 
+# -- Chunked (resumable) uploads ---------------------------------------------
+from pydantic import BaseModel as _PydBase, Field as _PydField
+from src.chunked_upload import ChunkStore, ChunkLimits, ChunkUploadError
+
+MAX_CHUNKED_GB = float(os.getenv("MAX_CHUNKED_GB", 10))
+chunk_limiter = RateLimiter(max_calls=600, window_s=60)
+_CHUNK_STORE = None
+
+
+def _chunk_store() -> ChunkStore:
+    global _CHUNK_STORE
+    if _CHUNK_STORE is None:
+        _CHUNK_STORE = ChunkStore(
+            UPLOAD_DIR / "_chunks",
+            ChunkLimits(max_total_bytes=int(MAX_CHUNKED_GB * 1024 ** 3)),
+            allowed_extensions=ALLOWED_EXTENSIONS,
+        )
+    return _CHUNK_STORE
+
+
+class ChunkInitRequest(_PydBase):
+    filename: str = _PydField(..., min_length=1, max_length=500)
+    total_size: int
+    chunk_size: int
+
+
+@app.post("/api/v1/uploads/init", status_code=201, tags=["Files"])
+async def chunk_upload_init(
+    body: ChunkInitRequest,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a resumable upload. Returns upload_id, chunk_size and n_chunks."""
+    if not upload_limiter.is_allowed(current_user.id):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="chunk upload init rate limit")
+        raise HTTPException(status_code=429, detail="Upload rate limit exceeded")
+    clean = sanitize_filename(body.filename)
+    if clean.rejected or not clean.value:
+        raise HTTPException(status_code=400, detail="Invalid file name.")
+    try:
+        meta = await asyncio.to_thread(
+            _chunk_store().init, current_user.id, clean.value, body.total_size, body.chunk_size
+        )
+    except ChunkUploadError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {
+        "upload_id": meta["upload_id"], "filename": meta["filename"],
+        "chunk_size": meta["chunk_size"], "n_chunks": meta["n_chunks"],
+    }
+
+
+@app.put("/api/v1/uploads/{upload_id}/chunks/{index}", tags=["Files"])
+async def chunk_upload_put(
+    upload_id: str,
+    index: int,
+    request: Request,
+    current_user: DBUser = Depends(get_current_user),
+):
+    """Upload one chunk (raw bytes in the request body). Safe to repeat."""
+    if not chunk_limiter.is_allowed(current_user.id):
+        raise HTTPException(status_code=429, detail="Too many chunk requests")
+    store = _chunk_store()
+    limit = store.limits.max_chunk_bytes
+    buf = bytearray()
+    async for part in request.stream():
+        buf.extend(part)
+        if len(buf) > limit:
+            raise HTTPException(status_code=413, detail="Chunk too large.")
+    try:
+        count = await asyncio.to_thread(store.put_chunk, upload_id, current_user.id, index, bytes(buf))
+    except ChunkUploadError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"received_count": count}
+
+
+@app.get("/api/v1/uploads/{upload_id}", tags=["Files"])
+async def chunk_upload_status(
+    upload_id: str,
+    current_user: DBUser = Depends(get_current_user),
+):
+    """Which chunks have arrived (used to resume after a dropped connection)."""
+    try:
+        return await asyncio.to_thread(_chunk_store().status, upload_id, current_user.id)
+    except ChunkUploadError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+
+@app.post("/api/v1/uploads/{upload_id}/complete", response_model=UploadResponse, status_code=201, tags=["Files"])
+async def chunk_upload_complete(
+    upload_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reassemble all chunks into the final file and register it like a normal upload."""
+    if not upload_limiter.is_allowed(current_user.id):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="chunk upload complete rate limit")
+        raise HTTPException(status_code=429, detail="Upload rate limit exceeded")
+    store = _chunk_store()
+    try:
+        st = await asyncio.to_thread(store.status, upload_id, current_user.id)
+        filename = st["filename"]
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        file_id = str(uuid.uuid4())
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = UPLOAD_DIR / f"tmp_{file_id}.{ext}"
+        checksum, size = await asyncio.to_thread(store.assemble, upload_id, current_user.id, tmp_path)
+    except ChunkUploadError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+    final_path = UPLOAD_DIR / f"{current_user.id}_{checksum[:16]}.{ext}"
+    if not final_path.exists():
+        shutil.move(str(tmp_path), str(final_path))
+    else:
+        tmp_path.unlink(missing_ok=True)  # dedup, same as save_upload
+
+    info = UploadedFileInfo(
+        file_id=file_id,
+        filename=filename,
+        file_type=detect_file_type(filename),
+        size_bytes=size,
+        size_mb=round(size / (1024 * 1024), 3),
+        checksum=checksum,
+        storage_path=str(final_path),
+    )
+    db.add(DBUploadedFile(
+        id=info.file_id, user_id=current_user.id, filename=info.filename,
+        file_type=info.file_type, size_bytes=info.size_bytes,
+        checksum=info.checksum, storage_path=info.storage_path,
+    ))
+    await db.commit()
+    log.info("Chunked upload done | user=%s | file=%s | size=%.1fMB", current_user.username, info.filename, info.size_mb)
+    return UploadResponse(file=info)
+
+
+@app.delete("/api/v1/uploads/{upload_id}", status_code=204, tags=["Files"])
+async def chunk_upload_abort(
+    upload_id: str,
+    current_user: DBUser = Depends(get_current_user),
+):
+    """Cancel an unfinished upload and free its disk space."""
+    try:
+        await asyncio.to_thread(_chunk_store().abort, upload_id, current_user.id)
+    except ChunkUploadError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+
 @app.delete("/api/v1/files/{file_id}", status_code=204, tags=["Files"])
 async def delete_file(
     file_id: str,
