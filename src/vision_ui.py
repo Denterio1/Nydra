@@ -153,15 +153,24 @@ def build_dataset_report(root, name=None, max_images=300):
         if found == 0:
             return {"status": "error", "mode": "dataset", "name": name, "message": "No images found."}
         truncated = found > max_images
+        full = df
+        full_valid = full["is_valid"].astype(bool)
+        n_valid_all = int(full_valid.sum())
+        n_dup = int(full["is_duplicate"].astype(bool).sum())
+        unreadable = [_rel(x, root) for x in full.loc[~full_valid, "file_path"].tolist()[:20]]
+        if "label" in full.columns:
+            full_counts = full["label"].fillna("(unlabeled)").astype(str).value_counts().to_dict()
+        else:
+            full_counts = {}
         if truncated:
-            df = df.sample(max_images, random_state=0).reset_index(drop=True)
+            from src.sampling import stratified_sample
+            df = stratified_sample(full.loc[full_valid], max_images)
 
         valid_mask = df["is_valid"].astype(bool)
         n_valid = int(valid_mask.sum())
         if n_valid < 2:
             return {"status": "error", "mode": "dataset", "name": name,
                     "message": "Need at least 2 readable images (found %d)." % n_valid}
-        n_dup = int(df["is_duplicate"].astype(bool).sum())
 
         dfq, qrep = analyze_dataset_quality(df, n_workers=2, verbose=False)
         dfq = dfq.copy()
@@ -216,6 +225,17 @@ def build_dataset_report(root, name=None, max_images=300):
             "suggested_augmentation": _g(bal, "suggested_augmentation", {}),
             "recommendations": _txts(_g(bal, "recommendations", [])),
         }
+
+        if truncated and full_counts:
+            vals = list(full_counts.values())
+            balance.update({
+                "class_counts": full_counts, "num_classes": len(vals),
+                "imbalance_ratio": round(max(vals) / max(min(vals), 1), 2),
+                "balance_score": None,
+                "majority": max(full_counts, key=full_counts.get),
+                "minority": min(full_counts, key=full_counts.get),
+                "suggested_augmentation": {}, "recommendations": [],
+            })
 
         pairs = []
         for tup in list(_g(div, "near_duplicate_pairs", []) or [])[:15]:
@@ -278,13 +298,18 @@ def build_dataset_report(root, name=None, max_images=300):
                 "thumbnail": _thumb_n(fp) if ok else None,
             })
 
-        unreadable = [_rel(x, root) for x in df.loc[~valid_mask, "file_path"].tolist()[:20]]
 
         return _clean({
             "status": "ok", "mode": "dataset", "name": name,
-            "counts": {"found": found, "analyzed": int(len(df)), "readable": n_valid,
-                       "unreadable": int(len(df)) - n_valid, "classes": _g(bal, "num_classes")},
-            "truncated": truncated, "unreadable_files": unreadable,
+            "counts": {"found": found, "analyzed": int(len(df)), "readable": n_valid_all,
+                       "unreadable": found - n_valid_all,
+                       "classes": (len(full_counts) or _g(bal, "num_classes"))},
+            "truncated": truncated,
+            "sample_note": ("Analyzed {:,} of {:,} readable images (stratified by class). "
+                            "Class counts and exact duplicates cover all {:,} files; "
+                            "the readiness balance sub-score comes from the sample.").format(
+                                int(len(df)), n_valid_all, found) if truncated else "",
+            "unreadable_files": unreadable,
             "readiness": readiness, "quality": quality, "balance": balance,
             "duplicates": duplicates, "outliers": outliers, "sizes": sizes, "color": color,
             "gallery": gallery,
