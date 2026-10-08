@@ -52,3 +52,9 @@ logs/
 
 __pycache__/
 *.pyc
+
+big_ds/
+probe_dataset/
+probe_images/
+skew_ds/
+huge_test.zip
