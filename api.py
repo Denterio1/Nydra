@@ -1203,7 +1203,7 @@ async def _run_text_docs(file_path: Path, tracker: StepTracker, db: AsyncSession
 async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
     # images goal, zip upload: safe extract, then dataset-level report
     from src.vision_ui import build_dataset_report  # noqa: PLC0415
-    from src.zip_safe import extract_image_zip, UnsafeZipError  # noqa: PLC0415
+    from src.zip_safe import extract_image_zip, UnsafeZipError, ZipLimits  # noqa: PLC0415
     import contextlib, io  # noqa: PLC0415
 
     def _quiet_dataset(root: str, name: str):
@@ -1217,7 +1217,8 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
         if i == 0:
             try:
                 dest = UPLOAD_DIR / "_zip" / file_path.stem
-                ex = await asyncio.to_thread(extract_image_zip, file_path, dest)
+                ZIP_BIG_LIMITS = ZipLimits(max_entries=100_000, max_files=50_000, max_file_bytes=100 * 1024 * 1024, max_total_bytes=10 * 1024 ** 3)
+                ex = await asyncio.to_thread(extract_image_zip, file_path, dest, ZIP_BIG_LIMITS)
                 report = await asyncio.to_thread(_quiet_dataset, str(ex.dataset_root), file_path.name)
                 if isinstance(report, dict):
                     report["extract"] = {"extracted": ex.extracted, "total_bytes": ex.total_bytes, "skipped": ex.skipped}
@@ -1226,6 +1227,9 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
             except Exception as exc:
                 log.warning("Dataset report failed: %s", type(exc).__name__)
                 report = {"status": "error", "message": "Dataset analysis failed: %s" % type(exc).__name__}
+            finally:
+                # zip_cleanup: extracted images are not needed once the report exists
+                await asyncio.to_thread(shutil.rmtree, dest, True)
         await tracker.finish_step(db)
 
     result: Dict[str, Any] = {"vision_report": report}
@@ -1793,6 +1797,19 @@ async def lifespan(app: FastAPI):
             log.warning('Text warm-up skipped: %s', type(exc).__name__)
     import threading as _threading
     _threading.Thread(target=_warm_text_models, daemon=True, name='text-warmup').start()
+    # chunk_sweeper: remove abandoned chunk-upload sessions every hour
+    async def _chunk_sweeper():
+        while True:
+            try:
+                await asyncio.sleep(3600)
+                n = await asyncio.to_thread(_chunk_store().cleanup_stale)
+                if n:
+                    log.info('Chunk sweeper removed %d stale sessions', n)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning('Chunk sweeper failed: %s', type(exc).__name__)
+    _sweeper_task = asyncio.create_task(_chunk_sweeper())
     log.info("✅ Database ready | ✅ Job queue running (%d workers)", WORKER_COUNT)
     yield
     # ── Shutdown ──────────────────────────────────────────────────────────
