@@ -1247,6 +1247,67 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
                 "description": title, "severity": "high" if n < 3 else "medium",
                 "affected_columns": [], "suggestion": "", "auto_fixable": False,
             })
+        # --- issues derived from the quality / duplicates / balance blocks ---
+        _cnt = report.get("counts") or {}
+        _n = max(int(_cnt.get("analyzed") or 0), 1)
+        _q = report.get("quality") or {}
+
+        def _sev(k):
+            r = k / _n
+            return "high" if r >= 0.3 else ("medium" if r >= 0.1 else "low")
+
+        _flags = [
+            ("noisy", "noisy images", "Denoise them (image_cleaner.denoise_all)."),
+            ("blurry", "blurry images", "Remove them or sharpen (image_cleaner)."),
+            ("dark", "too dark images", "Fix brightness (image_cleaner)."),
+            ("overexposed", "overexposed images", "Fix exposure (image_cleaner)."),
+            ("low_res", "low-resolution images", "Replace or upscale them."),
+            ("artifacts", "images with compression artifacts", "Re-export from the originals."),
+            ("rejected", "images rejected by quality checks", "Remove them from the dataset."),
+        ]
+        for _key, _label, _tip in _flags:
+            _k = int(_q.get(_key) or 0)
+            if _k > 0:
+                _t = "%d %s (%d%% of analyzed)" % (_k, _label, round(100 * _k / _n))
+                issues.append({
+                    "issue_id": "ds-q-" + _key, "code": "image_" + _key, "title": _t,
+                    "description": _t, "severity": _sev(_k),
+                    "affected_columns": [], "suggestion": _tip, "auto_fixable": True,
+                })
+        _unread = int(_cnt.get("unreadable") or 0)
+        if _unread > 0:
+            _t = "%d unreadable or corrupted files" % _unread
+            issues.append({
+                "issue_id": "ds-q-unreadable", "code": "image_unreadable", "title": _t,
+                "description": _t, "severity": "high" if _unread / max(int(_cnt.get("found") or 1), 1) >= 0.05 else "medium",
+                "affected_columns": [], "suggestion": "Remove or re-export these files.", "auto_fixable": False,
+            })
+        _dup = report.get("duplicates") or {}
+        _nd = int(_dup.get("exact_flagged") or 0) + len(_dup.get("pairs") or [])
+        if _nd > 0:
+            _t = "%d duplicate or near-duplicate images" % _nd
+            issues.append({
+                "issue_id": "ds-q-dups", "code": "image_duplicates", "title": _t,
+                "description": _t, "severity": "medium",
+                "affected_columns": [], "suggestion": "Remove duplicates before splitting train/test.", "auto_fixable": True,
+            })
+        _bal = report.get("balance") or {}
+        if _bal.get("severely_imbalanced"):
+            _t = "Classes are severely imbalanced (ratio %sx)" % _bal.get("imbalance_ratio")
+            issues.append({
+                "issue_id": "ds-q-balance", "code": "class_imbalance", "title": _t,
+                "description": _t, "severity": "high",
+                "affected_columns": [], "suggestion": "Collect more images for the small classes or augment them.", "auto_fixable": False,
+            })
+        _orate = (report.get("outliers") or {}).get("rate")
+        if isinstance(_orate, (int, float)) and _orate >= 0.03:
+            _t = "%d%% of images look like outliers" % round(100 * _orate)
+            issues.append({
+                "issue_id": "ds-q-outliers", "code": "image_outliers", "title": _t,
+                "description": _t, "severity": "medium",
+                "affected_columns": [], "suggestion": "Review the flagged images in the Quality tab.", "auto_fixable": False,
+            })
+        # --- end derived issues ---
         subs = rd.get("sub_scores") or {}
         result["ml_readiness"] = {"score": score}
         result["issues"] = issues
