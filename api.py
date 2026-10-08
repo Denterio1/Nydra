@@ -1308,6 +1308,13 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
                 "affected_columns": [], "suggestion": "Review the flagged images in the Quality tab.", "auto_fixable": False,
             })
         # --- end derived issues ---
+        # verdict_downgrade: one flaw affecting most images means "not ready" in practice
+        _worst = max([int(_q.get(k) or 0) for k, _l, _t2 in _flags] + [0]) / _n
+        if _worst > 0.5 and verdict == "ready":
+            verdict = "needs_work"
+            if grade in ("A", "B"):
+                grade = "C"
+
         subs = rd.get("sub_scores") or {}
         result["ml_readiness"] = {"score": score}
         result["issues"] = issues
