@@ -106,7 +106,12 @@ const ALLOWED_EXTENSIONS = new Set([
   "png","jpg","jpeg","webp","bmp","tiff","tif","gif","heic","zip",
 ]);
 
-const MAX_SIZE_MB   = 500;
+const MAX_SIZE_MB   = 10240;
+const MAX_DIRECT_MB = 500;
+const CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
+const CHUNK_SIZE_BYTES      = 16 * 1024 * 1024;
+const CHUNK_PARALLEL = 3;
+const CHUNK_RETRIES  = 3;
 const CHUNK_SIZE    = 1024 * 1024 * 5; // 5MB chunks
 
 const FILE_TYPE_COLORS: Record<string, string> = {
@@ -264,6 +269,118 @@ async function uploadFile(
     xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.send(form);
   });
+}
+
+class UploadFatal extends Error {}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function uploadChunked(
+  file: File,
+  token: string,
+  apiUrl: string,
+  onProgress: (pct: number) => void,
+  signal: AbortSignal,
+): Promise<FileInfo> {
+  const auth = { Authorization: `Bearer ${token}` };
+
+  const fail = async (res: Response): Promise<never> => {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const e = await res.json();
+      msg = typeof e.detail === "string" ? e.detail : (e.message ?? msg);
+    } catch { /* keep default */ }
+    throw new UploadFatal(msg);
+  };
+
+  const initRes = await fetch(`${apiUrl}/api/v1/uploads/init`, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, total_size: file.size, chunk_size: CHUNK_SIZE_BYTES }),
+    signal,
+  });
+  if (!initRes.ok) await fail(initRes);
+  const init = await initRes.json();
+  const uploadId: string = init.upload_id;
+  const chunkSize: number = init.chunk_size;
+  const n: number = init.n_chunks;
+  const base = `${apiUrl}/api/v1/uploads/${uploadId}`;
+
+  const sendOne = async (i: number): Promise<void> => {
+    const blob = file.slice(i * chunkSize, Math.min(file.size, (i + 1) * chunkSize));
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < CHUNK_RETRIES; attempt++) {
+      if (signal.aborted) throw new UploadFatal("Upload cancelled");
+      let res: Response | null = null;
+      try {
+        res = await fetch(`${base}/chunks/${i}`, { method: "PUT", headers: auth, body: blob, signal });
+      } catch (e) {
+        if (signal.aborted) throw new UploadFatal("Upload cancelled");
+        lastErr = e;
+      }
+      if (res) {
+        if (res.ok) return;
+        if (res.status >= 400 && res.status < 500 && res.status !== 429) await fail(res);
+        lastErr = new Error(`HTTP ${res.status}`);
+      }
+      await sleepMs(1000 * 2 ** attempt);
+    }
+    throw lastErr instanceof Error ? lastErr : new Error("Chunk upload failed");
+  };
+
+  try {
+    let pending: number[] = Array.from({ length: n }, (_, i) => i);
+    let done = 0;
+    for (let round = 0; ; round++) {
+      const queue = [...pending];
+      const failed: number[] = [];
+      let fatal: Error | null = null;
+      const worker = async () => {
+        while (queue.length > 0 && !fatal) {
+          const i = queue.shift() as number;
+          try {
+            await sendOne(i);
+            done++;
+            onProgress(Math.round((done / n) * 95));
+          } catch (e) {
+            if (e instanceof UploadFatal) fatal = e;
+            else failed.push(i);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CHUNK_PARALLEL, queue.length) }, worker));
+      if (fatal) throw fatal;
+      pending = failed;
+      if (pending.length === 0) break;
+      if (round >= 2) {
+        throw new Error("Connection unstable: some parts could not be sent. Try again.");
+      }
+      await sleepMs(2000);
+      // Resume: ask the server which chunks it already has
+      const stRes = await fetch(base, { headers: auth, signal });
+      if (!stRes.ok) await fail(stRes);
+      const st = await stRes.json();
+      const got = new Set<number>(st.received as number[]);
+      pending = pending.filter((i) => !got.has(i));
+      done = n - pending.length;
+      onProgress(Math.round((done / n) * 95));
+      if (pending.length === 0) break;
+    }
+
+    onProgress(97);
+    const cRes = await fetch(`${base}/complete`, { method: "POST", headers: auth, signal });
+    if (!cRes.ok) await fail(cRes);
+    const out = await cRes.json();
+    onProgress(100);
+    return out.file as FileInfo;
+  } catch (e) {
+    if (signal.aborted) {
+      fetch(base, { method: "DELETE", headers: auth, keepalive: true }).catch(() => {});
+    }
+    throw e;
+  }
 }
 
 async function uploadAuditFiles(
@@ -870,7 +987,7 @@ export default function Uploader({
       // ── Validate all files first ──────────────────────────────────────
       for (const sf of state.files) {
         dispatch({ type: "UPDATE_FILE", id: sf.id, patch: { status: "validating" } });
-        const err = validateFile(sf.raw);
+        const err = validateFile(sf.raw) ?? (mode !== "single" && sf.raw.size > MAX_DIRECT_MB * 1024 * 1024 ? `In train/test mode each file can be up to ${MAX_DIRECT_MB} MB.` : null);
         if (err) {
           dispatch({ type: "UPDATE_FILE", id: sf.id, patch: { status: "error", error: err } });
           onError?.(err);
@@ -878,7 +995,7 @@ export default function Uploader({
           return;
         }
         // Compute checksum
-        const checksum = await computeChecksum(sf.raw);
+        const checksum = sf.raw.size > CHUNK_THRESHOLD_BYTES ? "" : await computeChecksum(sf.raw);
         dispatch({ type: "UPDATE_FILE", id: sf.id, patch: { checksum, progress: 5 } });
       }
 
@@ -887,7 +1004,7 @@ export default function Uploader({
         const sf = state.files[0];
         dispatch({ type: "UPDATE_FILE", id: sf.id, patch: { status: "uploading", progress: 10 } });
 
-        const result = await uploadFile(
+        const result = await (sf.raw.size > CHUNK_THRESHOLD_BYTES ? uploadChunked : uploadFile)(
           sf.raw, token, API_BASE,
           (pct) => dispatch({ type: "UPDATE_FILE", id: sf.id, patch: { progress: 10 + pct * 0.9 } }),
           abortCtrl.current.signal,
