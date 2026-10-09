@@ -103,7 +103,7 @@ const ALLOWED_TYPES: Record<string, string> = {
 const ALLOWED_EXTENSIONS = new Set([
   "csv","xlsx","xls","json","tsv","parquet",
   "pdf","docx","doc","txt","md",
-  "png","jpg","jpeg","webp","bmp","tiff","tif","gif","heic","zip",
+  "png","jpg","jpeg","webp","bmp","tiff","tif","gif","heic","zip","tar","tgz","gz",
 ]);
 
 const MAX_SIZE_MB   = 10240;

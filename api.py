@@ -288,7 +288,7 @@ LLM_PROVIDER_REGISTRY: Dict[str, Dict[str, Any]] = {
 
 
 
-ALLOWED_EXTENSIONS = {
+ALLOWED_EXTENSIONS = {"tar", "tgz", "gz", 
     "csv", "xlsx", "xls", "json", "tsv", "parquet",
     "pdf", "docx", "doc", "txt", "md", "html",
     "png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif", "heic",
@@ -1218,7 +1218,8 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
             try:
                 dest = UPLOAD_DIR / "_zip" / file_path.stem
                 ZIP_BIG_LIMITS = ZipLimits(max_entries=100_000, max_files=50_000, max_file_bytes=100 * 1024 * 1024, max_total_bytes=10 * 1024 ** 3)
-                ex = await asyncio.to_thread(extract_image_zip, file_path, dest, ZIP_BIG_LIMITS)
+                from src.tar_safe import extract_image_tar  # noqa: PLC0415
+                ex = await asyncio.to_thread(extract_image_zip if file_path.suffix.lower() == ".zip" else extract_image_tar, file_path, dest, ZIP_BIG_LIMITS)
                 report = await asyncio.to_thread(_quiet_dataset, str(ex.dataset_root), file_path.name)
                 if isinstance(report, dict):
                     report["extract"] = {"extracted": ex.extracted, "total_bytes": ex.total_bytes, "skipped": ex.skipped}
@@ -1336,7 +1337,7 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
 
 
 async def _run_images(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
-    if file_path.suffix.lower() == ".zip":
+    if file_path.suffix.lower() in (".zip", ".tar", ".tgz", ".gz"):
         return await _run_images_zip(file_path, tracker, db)
     # images goal: single-image quality report for the Vision Lab workspace
     from src.vision_ui import build_single_report  # noqa: PLC0415
