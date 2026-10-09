@@ -462,15 +462,15 @@ class ContrastAnalyzer:
         }
 
     def _local_contrast_map(self, gray: np.ndarray, block_size: int = 8) -> np.ndarray:
-        """Compute local RMS contrast per block."""
+        """Compute local RMS contrast per block (vectorized)."""
         h, w = gray.shape
-        img_f = gray.astype(np.float64) / 255.0
-        contrasts = []
-        for y in range(0, h - block_size, block_size):
-            for x in range(0, w - block_size, block_size):
-                block = img_f[y:y+block_size, x:x+block_size]
-                contrasts.append(np.std(block))
-        return np.array(contrasts) if contrasts else np.array([0.0])
+        ny = len(range(0, h - block_size, block_size))
+        nx = len(range(0, w - block_size, block_size))
+        if ny == 0 or nx == 0:
+            return np.array([0.0])
+        img_f = gray[:ny * block_size, :nx * block_size].astype(np.float64) / 255.0
+        blocks = img_f.reshape(ny, block_size, nx, block_size)
+        return blocks.std(axis=(1, 3)).reshape(-1)
 
     def _compute_score(
         self,
@@ -759,18 +759,23 @@ class NoiseAnalyzer:
             return NoiseType.GAUSSIAN.value
 
     def _local_noise_map(self, gray: np.ndarray, block_size: int = 16) -> np.ndarray:
-        """Compute local noise sigma for each block."""
+        """Compute local noise sigma for each block (vectorized, chunked by rows)."""
         h, w = gray.shape
-        values = []
-        for y in range(0, h - block_size, block_size):
-            for x in range(0, w - block_size, block_size):
-                block = gray[y:y+block_size, x:x+block_size].astype(np.float64)
-                # Local noise via high-pass
-                if block.std() > 0:
-                    values.append(float(np.median(np.abs(block - np.median(block))) / 0.6745))
-                else:
-                    values.append(0.0)
-        return np.array(values) if values else np.array([0.0])
+        bs = block_size
+        ny = len(range(0, h - bs, bs))
+        nx = len(range(0, w - bs, bs))
+        if ny == 0 or nx == 0:
+            return np.array([0.0])
+        out = np.zeros((ny, nx), dtype=np.float64)
+        step = 32
+        for r0 in range(0, ny, step):
+            r1 = min(ny, r0 + step)
+            sub = gray[r0 * bs:r1 * bs, :nx * bs].astype(np.float64)
+            b = sub.reshape(r1 - r0, bs, nx, bs).transpose(0, 2, 1, 3).reshape(r1 - r0, nx, bs * bs)
+            med = np.median(b, axis=2, keepdims=True)
+            mad = np.median(np.abs(b - med), axis=2) / 0.6745
+            out[r0:r1] = np.where(b.std(axis=2) > 0, mad, 0.0)
+        return out.reshape(-1)
 
     def _salt_pepper_ratio(self, gray: np.ndarray) -> float:
         """Estimate fraction of salt & pepper pixels."""
@@ -913,16 +918,12 @@ class ArtifactDetector:
             if not CV2_AVAILABLE:
                 return -1
             h, w = gray.shape
-            img  = gray.astype(np.float64)
-            # Measure average 8x8 block variance
-            block_vars = []
-            for y in range(0, h-8, 8):
-                for x in range(0, w-8, 8):
-                    block = img[y:y+8, x:x+8]
-                    block_vars.append(block.var())
-            if not block_vars:
+            ny = len(range(0, h - 8, 8))
+            nx = len(range(0, w - 8, 8))
+            if ny == 0 or nx == 0:
                 return -1
-            mean_var = np.mean(block_vars)
+            img = gray[:ny * 8, :nx * 8].astype(np.float64)
+            mean_var = img.reshape(ny, 8, nx, 8).var(axis=(1, 3)).mean()
             # Heuristic mapping: high variance = high quality
             if mean_var > 500: return 95
             elif mean_var > 200: return 85
