@@ -1200,7 +1200,7 @@ async def _run_text_docs(file_path: Path, tracker: StepTracker, db: AsyncSession
     return _sanitize_for_json(result)
 
 
-async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
+async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSession, display_name: "str | None" = None) -> Dict[str, Any]:
     # images goal, zip upload: safe extract, then dataset-level report
     from src.vision_ui import build_dataset_report  # noqa: PLC0415
     from src.zip_safe import extract_image_zip, UnsafeZipError, ZipLimits  # noqa: PLC0415
@@ -1220,7 +1220,7 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
                 ZIP_BIG_LIMITS = ZipLimits(max_entries=100_000, max_files=50_000, max_file_bytes=100 * 1024 * 1024, max_total_bytes=10 * 1024 ** 3)
                 from src.tar_safe import extract_image_tar  # noqa: PLC0415
                 ex = await asyncio.to_thread(extract_image_zip if file_path.suffix.lower() == ".zip" else extract_image_tar, file_path, dest, ZIP_BIG_LIMITS)
-                report = await asyncio.to_thread(_quiet_dataset, str(ex.dataset_root), file_path.name)
+                report = await asyncio.to_thread(_quiet_dataset, str(ex.dataset_root), (display_name or file_path.name))
                 if isinstance(report, dict):
                     report["extract"] = {"extracted": ex.extracted, "total_bytes": ex.total_bytes, "skipped": ex.skipped}
             except UnsafeZipError as exc:
@@ -1336,9 +1336,9 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
     return _sanitize_for_json(result)
 
 
-async def _run_images(file_path: Path, tracker: StepTracker, db: AsyncSession) -> Dict[str, Any]:
+async def _run_images(file_path: Path, tracker: StepTracker, db: AsyncSession, display_name: "str | None" = None) -> Dict[str, Any]:
     if file_path.suffix.lower() in (".zip", ".tar", ".tgz", ".gz"):
-        return await _run_images_zip(file_path, tracker, db)
+        return await _run_images_zip(file_path, tracker, db, display_name)
     # images goal: single-image quality report for the Vision Lab workspace
     from src.vision_ui import build_single_report  # noqa: PLC0415
 
@@ -1348,7 +1348,7 @@ async def _run_images(file_path: Path, tracker: StepTracker, db: AsyncSession) -
         await asyncio.sleep(0)
         if i == 0:
             try:
-                report = await asyncio.to_thread(build_single_report, str(file_path), file_path.name)
+                report = await asyncio.to_thread(build_single_report, str(file_path), (display_name or file_path.name))
             except Exception as exc:
                 log.warning("Image report failed: %s", type(exc).__name__)
                 report = {"status": "error", "message": "Image analysis failed: %s" % type(exc).__name__}
@@ -1398,6 +1398,21 @@ async def _run_images(file_path: Path, tracker: StepTracker, db: AsyncSession) -
     return _sanitize_for_json(result)
 
 
+async def _display_name(db, tracker, file_path):
+    """Original upload filename from the job row; falls back to the stored name."""
+    try:
+        for attr in ("job_id", "id", "_job_id"):
+            jid = getattr(tracker, attr, None)
+            if jid:
+                row = (await db.execute(select(DBJob.filename).where(DBJob.id == jid))).scalar_one_or_none()
+                if row:
+                    return str(row)
+                break
+    except Exception:
+        pass
+    return file_path.name
+
+
 async def _run_agent(
     goal: JobGoal,
     file_path: Path,
@@ -1413,7 +1428,7 @@ async def _run_agent(
     if getattr(goal, "value", goal) == "text_docs":
         return await _run_text_docs(file_path, tracker, db)
     if getattr(goal, "value", goal) == "images":
-        return await _run_images(file_path, tracker, db)
+        return await _run_images(file_path, tracker, db, await _display_name(db, tracker, file_path))
 
 
     async def emit(progress: int, message: str) -> None:
