@@ -295,17 +295,43 @@ async function uploadChunked(
     throw new UploadFatal(msg);
   };
 
-  const initRes = await fetch(`${apiUrl}/api/v1/uploads/init`, {
-    method: "POST",
-    headers: { ...auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ filename: file.name, total_size: file.size, chunk_size: CHUNK_SIZE_BYTES }),
-    signal,
-  });
-  if (!initRes.ok) await fail(initRes);
-  const init = await initRes.json();
-  const uploadId: string = init.upload_id;
-  const chunkSize: number = init.chunk_size;
-  const n: number = init.n_chunks;
+  // Resume after a page reload: the same file (name+size+mtime) reuses its server session
+  const rkey = `nydra_upload:${file.name}:${file.size}:${file.lastModified}`;
+  let uploadId = "";
+  let chunkSize = 0;
+  let n = 0;
+  let resumedGot: Set<number> | null = null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(rkey) || "null");
+    if (saved && saved.upload_id) {
+      const sr = await fetch(`${apiUrl}/api/v1/uploads/${saved.upload_id}`, { headers: auth, signal });
+      if (sr.ok) {
+        const st0 = await sr.json();
+        uploadId = saved.upload_id;
+        chunkSize = saved.chunk_size;
+        n = saved.n_chunks;
+        resumedGot = new Set<number>(st0.received as number[]);
+      } else {
+        localStorage.removeItem(rkey);
+      }
+    }
+  } catch { /* no saved session or server unreachable: start fresh */ }
+  if (!uploadId) {
+    const initRes = await fetch(`${apiUrl}/api/v1/uploads/init`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: file.name, total_size: file.size, chunk_size: CHUNK_SIZE_BYTES }),
+      signal,
+    });
+    if (!initRes.ok) await fail(initRes);
+    const init = await initRes.json();
+    uploadId = init.upload_id;
+    chunkSize = init.chunk_size;
+    n = init.n_chunks;
+    try {
+      localStorage.setItem(rkey, JSON.stringify({ upload_id: uploadId, chunk_size: chunkSize, n_chunks: n }));
+    } catch { /* storage full or blocked: resume after reload just won't work */ }
+  }
   const base = `${apiUrl}/api/v1/uploads/${uploadId}`;
 
   const sendOne = async (i: number): Promise<void> => {
@@ -331,8 +357,8 @@ async function uploadChunked(
   };
 
   try {
-    let pending: number[] = Array.from({ length: n }, (_, i) => i);
-    let done = 0;
+    let pending: number[] = Array.from({ length: n }, (_, i) => i).filter((i) => !(resumedGot && resumedGot.has(i)));
+    let done = n - pending.length;
     for (let round = 0; ; round++) {
       const queue = [...pending];
       const failed: number[] = [];
@@ -354,14 +380,20 @@ async function uploadChunked(
       if (fatal) throw fatal;
       pending = failed;
       if (pending.length === 0) break;
-      if (round >= 2) {
+      if (round >= 8) {
         throw new Error("Connection unstable: some parts could not be sent. Try again.");
       }
-      await sleepMs(2000);
+      await sleepMs(Math.min(30000, 2000 * 2 ** round));
       // Resume: ask the server which chunks it already has
-      const stRes = await fetch(base, { headers: auth, signal });
-      if (!stRes.ok) await fail(stRes);
-      const st = await stRes.json();
+      let st: any;
+      try {
+        const stRes = await fetch(base, { headers: auth, signal });
+        if (!stRes.ok) await fail(stRes);
+        st = await stRes.json();
+      } catch (e) {
+        if (e instanceof UploadFatal || signal.aborted) throw e;
+        continue; // server unreachable right now: wait and try the next round
+      }
       const got = new Set<number>(st.received as number[]);
       pending = pending.filter((i) => !got.has(i));
       done = n - pending.length;
@@ -373,10 +405,12 @@ async function uploadChunked(
     const cRes = await fetch(`${base}/complete`, { method: "POST", headers: auth, signal });
     if (!cRes.ok) await fail(cRes);
     const out = await cRes.json();
+    try { localStorage.removeItem(rkey); } catch { /* ignore */ }
     onProgress(100);
     return out.file as FileInfo;
   } catch (e) {
     if (signal.aborted) {
+      try { localStorage.removeItem(rkey); } catch { /* ignore */ }
       fetch(base, { method: "DELETE", headers: auth, keepalive: true }).catch(() => {});
     }
     throw e;

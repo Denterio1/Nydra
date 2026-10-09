@@ -48,6 +48,9 @@ def _issues(r):
         add("Underexposed", "high", "Too dark: %.0f%% of pixels near black" % (100 * (r.get("underexposed_ratio") or 0)))
     if r.get("is_overexposed"):
         add("Overexposed", "high", "Too bright: %.0f%% of pixels near white" % (100 * (r.get("overexposed_ratio") or 0)))
+    _et = str(r.get("exposure_type") or "").lower()
+    if _et in ("underexposed", "overexposed") and not any(i["title"] in ("Underexposed", "Overexposed") for i in out):
+        add(_et.capitalize(), "medium", "Exposure analysis: %s" % _et)
     if r.get("is_low_resolution"):
         add("Low resolution", "medium", str(r.get("resolution_verdict") or "Too small for ML training"))
     if r.get("has_blocking"):
@@ -135,7 +138,7 @@ def _thumb_n(path, size=96):
         return None
 
 
-def build_dataset_report(root, name=None, max_images=300):
+def _build_dataset_report_inner(root, name=None, max_images=300):
     """Dataset mode: folder of images -> JSON-safe report. Never raises."""
     t = time.time()
     root = Path(root)
@@ -319,3 +322,121 @@ def build_dataset_report(root, name=None, max_images=300):
     except Exception as e:
         return {"status": "error", "mode": "dataset", "name": name,
                 "message": type(e).__name__ + ": " + str(e)[:200]}
+
+
+# ------------------------------------------------ cheap first pass for big datasets
+_IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff", ".gif", ".heic"}
+
+
+def _scan_images(root):
+    out = []
+    for p in Path(root).rglob("*"):
+        try:
+            if (p.is_file() and p.suffix.lower() in _IMG_EXTS
+                    and not any(x.startswith(".") or x == "__MACOSX" for x in p.relative_to(root).parts)):
+                out.append(p)
+        except OSError:
+            pass
+    return out
+
+
+def _label_of(p, root):
+    return p.parent.name if p.parent != Path(root) else "(unlabeled)"
+
+
+def _probe_file(p):
+    """sha256 + cheap readability check (one pass over the file, no full decode)."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    ok = True
+    if Path(p).suffix.lower() != ".heic":
+        try:
+            from PIL import Image
+            with Image.open(p) as im:
+                im.verify()
+        except Exception:
+            ok = False
+    return h.hexdigest(), ok
+
+
+def build_dataset_report(root, name=None, max_images=300):
+    """Small sets: full analysis. Big sets: sha256 + class counts on ALL files, then the
+    full load / pHash / quality / analyzer only on a stratified sample. Never raises."""
+    t = time.time()
+    root = Path(root)
+    name = name or root.name
+    try:
+        files = _scan_images(root)
+        if len(files) <= max_images:
+            return _build_dataset_report_inner(root, name, max_images)
+
+        import math, os, shutil as _sh, tempfile
+        import pandas as pd
+        from concurrent.futures import ThreadPoolExecutor
+        from src.sampling import stratified_sample
+
+        with ThreadPoolExecutor(8) as ex:
+            probes = list(ex.map(_probe_file, files))
+        full = pd.DataFrame([{"file_path": str(p), "label": _label_of(p, root), "sha": s, "ok": ok}
+                             for p, (s, ok) in zip(files, probes)])
+        found = int(len(full))
+        ok_mask = full["ok"].astype(bool)
+        n_valid_all = int(ok_mask.sum())
+        if n_valid_all < 2:
+            return {"status": "error", "mode": "dataset", "name": name,
+                    "message": "Need at least 2 readable images (found %d)." % n_valid_all}
+        n_dup = int(full.loc[ok_mask, "sha"].duplicated().sum())
+        unreadable = [_rel(x, root) for x in full.loc[~ok_mask, "file_path"].tolist()[:20]]
+        full_counts = {str(k): int(v) for k, v in full.loc[ok_mask, "label"].value_counts().to_dict().items()}
+        sample = stratified_sample(full.loc[ok_mask], max_images)
+
+        tmp = Path(tempfile.mkdtemp(prefix="nydra_sample_"))
+        try:
+            for fp in sample["file_path"].tolist():
+                src = Path(fp)
+                dst = tmp / src.relative_to(root)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.link(src, dst)
+                except OSError:
+                    _sh.copy2(src, dst)
+            rep = _build_dataset_report_inner(tmp, name, max_images)
+        finally:
+            _sh.rmtree(tmp, ignore_errors=True)
+
+        if not isinstance(rep, dict) or rep.get("status") != "ok":
+            return rep
+        analyzed = int((rep.get("counts") or {}).get("analyzed") or len(sample))
+        rep["counts"] = {"found": found, "analyzed": analyzed, "readable": n_valid_all,
+                         "unreadable": found - n_valid_all, "classes": len(full_counts)}
+        rep["truncated"] = True
+        rep["unreadable_files"] = unreadable
+        rep.setdefault("duplicates", {})["exact_flagged"] = n_dup
+
+        vals = list(full_counts.values())
+        ratio = round(max(vals) / max(min(vals), 1), 2)
+        bal_score = round(100.0 * min(vals) / max(max(vals), 1), 1)
+        rep["balance"] = dict(rep.get("balance") or {}, class_counts=full_counts, num_classes=len(vals),
+                              imbalance_ratio=ratio, balance_score=bal_score,
+                              majority=max(full_counts, key=full_counts.get),
+                              minority=min(full_counts, key=full_counts.get),
+                              suggested_augmentation={}, recommendations=[])
+        rd = rep.setdefault("readiness", {})
+        rd.setdefault("sub_scores", {})["balance"] = bal_score
+        penalty = 0.0
+        if ratio >= 4 and isinstance(rd.get("score"), (int, float)):
+            penalty = min(15.0, 3.0 * math.log2(ratio))
+            rd["score"] = round(max(0.0, rd["score"] - penalty), 2)
+        rd["balance_penalty"] = round(penalty, 1)
+        rep["sample_note"] = ("Analyzed {:,} of {:,} readable images (stratified by class). Class counts, "
+                              "exact duplicates and readability cover all {:,} files. The balance sub-score "
+                              "uses the full class counts; imbalance of 4x or more lowers the readiness "
+                              "score by up to 15 points.").format(analyzed, n_valid_all, found)
+        rep["seconds"] = round(time.time() - t, 2)
+        return rep
+    except Exception as e:
+        return {"status": "error", "mode": "dataset", "name": name,
+                "message": type(e).__name__ + ": " + str(e)}
