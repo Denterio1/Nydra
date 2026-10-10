@@ -1685,7 +1685,7 @@ export default function Dashboard({
 
                 {/* --- VISION LAB VIEWS --- */}
                 {(activeTab === "gallery" || activeTab === "quality" || activeTab === "detections") && (resultData as any).vision_report && (
-                  <VisionLabView data={(resultData as any).vision_report} tab={activeTab} />
+                  <VisionLabView data={(resultData as any).vision_report} tab={activeTab} jobId={jobId} token={token} apiBase={API_BASE} />
                 )}
                 {activeTab === "gallery" && !(resultData as any).vision_report && (
                    <div style={{ textAlign: "center", padding: 40, border: "1px dashed rgba(51,65,85,0.5)", borderRadius: 10 }}>
@@ -1718,7 +1718,126 @@ export default function Dashboard({
 }
 
 
-function VisionLabView({ data, tab }: { data: any; tab: string }) {
+function CleanImagesPanel({ jobId, token, apiBase }: { jobId?: string | null; token?: string | null; apiBase: string }) {
+  const [st, setSt] = useState<string>("idle");
+  const [msg, setMsg] = useState<string>("");
+  const [sum, setSum] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const auth = { Authorization: `Bearer ${token ?? ""}` };
+  const base = `${apiBase}/api/v1/jobs/${jobId}/clean-images`;
+  const card: any = { background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16, marginTop: 16 };
+  const label: any = { fontSize: 10, letterSpacing: "0.15em", color: "#64748b", fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" };
+  const btn: any = { padding: "8px 14px", borderRadius: 8, border: "1px solid #38bdf8", background: "rgba(56,189,248,0.1)", color: "#38bdf8", fontSize: 11, letterSpacing: "0.1em", fontFamily: "'JetBrains Mono', monospace", cursor: "pointer" };
+
+  const poll = async () => {
+    try {
+      const r = await fetch(base, { headers: auth });
+      if (!r.ok) return;
+      const j = await r.json();
+      setSt(j.status === "none" ? "idle" : j.status);
+      setMsg(j.message || "");
+      setSum(j.summary || null);
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (jobId) poll();
+  }, [jobId]);
+
+  useEffect(() => {
+    if (st !== "running") return;
+    const t = setInterval(poll, 3000);
+    return () => clearInterval(t);
+  }, [st]);
+
+  const start = async () => {
+    if (!jobId) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch(base, { method: "POST", headers: auth });
+      if (r.status === 202 || r.status === 409) {
+        setSt("running");
+      } else {
+        let m = `Could not start cleaning (${r.status})`;
+        try { const j = await r.json(); if (j && j.message) m = j.message; } catch {}
+        throw new Error(m);
+      }
+    } catch (e: any) {
+      setErr(e?.message || "Could not start cleaning");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const download = async () => {
+    if (!jobId) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${apiBase}/api/v1/jobs/${jobId}/cleaned-images`, { headers: auth });
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cleaned_images.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e?.message || "Download failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fixes = sum && sum.fixes ? Object.entries(sum.fixes) : [];
+
+  return (
+    <div style={card}>
+      <div style={label}>Clean images</div>
+      {st === "idle" && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 10 }}>
+            Fix brightness, contrast, color cast and blur, drop duplicates and unreadable files, and get a cleaned zip with before/after reports.
+          </div>
+          <button style={btn} disabled={busy} onClick={start}>{busy ? "STARTING..." : "CLEAN IMAGES"}</button>
+        </div>
+      )}
+      {st === "running" && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "#f59e0b" }}>Cleaning in progress... this can take a few minutes for large datasets.</div>
+      )}
+      {st === "error" && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 10 }}>{msg || "Cleaning failed."}</div>
+          <button style={btn} disabled={busy} onClick={start}>TRY AGAIN</button>
+        </div>
+      )}
+      {st === "done" && (
+        <div style={{ marginTop: 10 }}>
+          {sum ? (
+            <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 10, lineHeight: 1.7 }}>
+              {sum.images_in} in &middot; {sum.cleaned} cleaned &middot; {sum.failed} failed &middot; {sum.removed} removed
+              {fixes.length > 0 && (
+                <div style={{ color: "#94a3b8" }}>Fixes: {fixes.map(([k, v]: any) => `${k} ${v}`).join(", ")}</div>
+              )}
+              <div style={{ color: "#64748b" }}>{sum.zip_mb} MB &middot; {sum.seconds}s</div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 10 }}>The cleaned zip is ready.</div>
+          )}
+          <button style={btn} disabled={busy} onClick={download}>{busy ? "DOWNLOADING..." : "DOWNLOAD CLEANED ZIP"}</button>
+        </div>
+      )}
+      {err && <div style={{ marginTop: 10, fontSize: 11, color: "#ef4444" }}>{err}</div>}
+    </div>
+  );
+}
+
+function VisionLabView({ data, tab, jobId, token, apiBase }: { data: any; tab: string; jobId?: string | null; token?: string | null; apiBase?: string }) {
   const card: any = { background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 };
   const label: any = { fontSize: 10, letterSpacing: "0.15em", color: "#64748b", fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" };
   const mono: any = { fontFamily: "'JetBrains Mono', monospace" };
@@ -1730,7 +1849,7 @@ function VisionLabView({ data, tab }: { data: any; tab: string }) {
     return <div style={{ ...card, color: "#ef4444", fontSize: 12 }}>Image analysis failed: {String(data.message || "unknown error")}</div>;
   }
 
-  if (data.mode === "dataset") return <VisionDatasetView data={data} tab={tab} />;
+  if (data.mode === "dataset") return (<><VisionDatasetView data={data} tab={tab} />{tab === "gallery" && apiBase ? <CleanImagesPanel jobId={jobId} token={token} apiBase={apiBase} /> : null}</>);
   const q = data.quality || {};
   const img = data.image || {};
   const score = typeof q.score === "number" ? Math.round(q.score) : 0;
