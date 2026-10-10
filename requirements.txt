@@ -36,3 +36,5 @@ joblib>=1.3.0
 packaging
 narwhals
 duckdb>=1.0.0
+tabulate
+tabulate

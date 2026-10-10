@@ -2898,6 +2898,108 @@ async def download_cleaned_file(
     return FileResponse(path, media_type="text/csv", filename="cleaned_data.csv")
 
 
+# ---------------------------------------------------------------- cleaned image dataset (zip)
+_CLEAN_JOBS: Dict[str, Dict[str, Any]] = {}   # in-process state; lost on restart (zip file stays on disk)
+_CLEAN_TASKS: set = set()
+_CLEAN_ARCHIVES = (".zip", ".tar", ".tgz", ".gz")
+
+
+def _clean_zip_path(job_id: str) -> Path:
+    return REPORT_DIR / f"{Path(job_id).name}_cleaned_images.zip"
+
+
+def _clean_public(st: Dict[str, Any]) -> Dict[str, Any]:
+    return {"status": st.get("status"), "message": st.get("message", ""), "summary": st.get("summary")}
+
+
+async def _run_clean_images(job_id: str, archive: Path) -> None:
+    st = _CLEAN_JOBS[job_id]
+    try:
+        from src.vision_clean import clean_archive_to_zip  # noqa: PLC0415
+        work = UPLOAD_DIR / "_clean" / Path(job_id).name
+        summary = await asyncio.wait_for(
+            asyncio.to_thread(clean_archive_to_zip, archive, work, _clean_zip_path(job_id)),
+            JOB_TIMEOUT_S,
+        )
+        st.update(status="done", summary=summary, message="")
+    except Exception as exc:  # noqa: BLE001
+        safe = exc.__class__.__name__ in ("CleanLimitError", "UnsafeZipError")
+        st.update(status="error", summary=None,
+                  message=str(exc) if safe else "Cleaning failed: %s" % type(exc).__name__)
+        log.warning("Clean images failed | job=%s | %s", job_id, type(exc).__name__)
+
+
+async def _clean_owned_job(job_id: str, current_user: DBUser, db: AsyncSession) -> DBJob:
+    res = await db.execute(select(DBJob).where(DBJob.id == job_id, DBJob.user_id == current_user.id))
+    job = res.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.post("/api/v1/jobs/{job_id}/clean-images", status_code=202, tags=["Jobs"])
+async def start_clean_images(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clean every image of an 'images' job's archive in the background; result is a zip."""
+    job = await _clean_owned_job(job_id, current_user, db)
+    if str(getattr(job.goal, "value", job.goal)) != "images":
+        raise HTTPException(status_code=400, detail="Only image jobs can be cleaned")
+    cur = _CLEAN_JOBS.get(job_id)
+    if cur and (cur.get("status") == "running"
+                or (cur.get("status") == "done" and _clean_zip_path(job_id).exists())):
+        return _clean_public(cur)
+    if any(v.get("status") == "running" and v.get("user_id") == current_user.id for v in _CLEAN_JOBS.values()):
+        raise HTTPException(status_code=409, detail="Another image cleaning is already running")
+    f_res = await db.execute(select(DBUploadedFile).where(DBUploadedFile.id == job.file_id))
+    file_rec = f_res.scalar_one_or_none()
+    if not file_rec:
+        raise HTTPException(status_code=404, detail="Uploaded file not found")
+    archive = Path(file_rec.storage_path)
+    if archive.suffix.lower() not in _CLEAN_ARCHIVES:
+        raise HTTPException(status_code=400, detail="Cleaning needs a zip or tar archive of images")
+    if not archive.exists():
+        raise HTTPException(status_code=404, detail="Uploaded file is no longer on disk")
+    _CLEAN_JOBS[job_id] = {"status": "running", "user_id": current_user.id, "started": time.time(),
+                           "message": "", "summary": None}
+    task = asyncio.create_task(_run_clean_images(job_id, archive))
+    _CLEAN_TASKS.add(task)
+    task.add_done_callback(_CLEAN_TASKS.discard)
+    return _clean_public(_CLEAN_JOBS[job_id])
+
+
+@app.get("/api/v1/jobs/{job_id}/clean-images", tags=["Jobs"])
+async def clean_images_status(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _clean_owned_job(job_id, current_user, db)
+    st = _CLEAN_JOBS.get(job_id)
+    if st:
+        return _clean_public(st)
+    if _clean_zip_path(job_id).exists():
+        return {"status": "done", "message": "", "summary": None}
+    return {"status": "none", "message": "", "summary": None}
+
+
+@app.get("/api/v1/jobs/{job_id}/cleaned-images", tags=["Jobs"])
+async def download_cleaned_images(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the cleaned image dataset (zip)."""
+    from fastapi.responses import FileResponse
+    await _clean_owned_job(job_id, current_user, db)
+    path = _clean_zip_path(job_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No cleaned images for this job")
+    return FileResponse(path, media_type="application/zip", filename="cleaned_images.zip")
+
+
 @app.delete("/api/v1/jobs/{job_id}", status_code=204, tags=["Jobs"])
 async def cancel_job(
     job_id: str,
