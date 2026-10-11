@@ -1718,6 +1718,126 @@ export default function Dashboard({
 }
 
 
+function ImageReportPanel({ jobId, token, apiBase }: { jobId?: string | null; token?: string | null; apiBase: string }) {
+  const [st, setSt] = useState<string>("idle");
+  const [msg, setMsg] = useState<string>("");
+  const [sum, setSum] = useState<any>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const auth = { Authorization: `Bearer ${token ?? ""}` };
+  const base = `${apiBase}/api/v1/jobs/${jobId}/image-report`;
+  const card: any = { background: "rgba(15,23,42,0.6)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16, marginTop: 16 };
+  const label: any = { fontSize: 10, letterSpacing: "0.15em", color: "#64748b", fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" };
+  const btn: any = { padding: "8px 14px", borderRadius: 8, border: "1px solid #38bdf8", background: "rgba(56,189,248,0.1)", color: "#38bdf8", fontSize: 11, letterSpacing: "0.1em", fontFamily: "'JetBrains Mono', monospace", cursor: "pointer" };
+
+  const poll = async () => {
+    try {
+      const r = await fetch(base, { headers: auth });
+      if (!r.ok) return;
+      const j = await r.json();
+      setSt(j.status === "none" ? "idle" : j.status);
+      setMsg(j.message || "");
+      setSum(j.summary || null);
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (jobId) poll();
+  }, [jobId]);
+
+  useEffect(() => {
+    if (st !== "running") return;
+    const t = setInterval(poll, 3000);
+    return () => clearInterval(t);
+  }, [st]);
+
+  const start = async () => {
+    if (!jobId) return;
+    setBusy("start");
+    setErr(null);
+    try {
+      const r = await fetch(base, { method: "POST", headers: auth });
+      if (r.status === 202 || r.status === 409) {
+        setSt("running");
+      } else {
+        let m = `Could not start the report (${r.status})`;
+        try { const j = await r.json(); if (j && (j.message || j.detail)) m = j.message || j.detail; } catch {}
+        throw new Error(m);
+      }
+    } catch (e: any) {
+      setErr(e?.message || "Could not start the report");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const download = async (fmt: string) => {
+    if (!jobId) return;
+    setBusy(fmt);
+    setErr(null);
+    try {
+      const res = await fetch(`${base}/${fmt}`, { headers: auth });
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `image_report.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setErr(e?.message || "Download failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div style={card}>
+      <div style={label}>Image report</div>
+      {st === "idle" && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 10 }}>
+            Build a full report of this dataset (quality, issues, recommendations) as HTML, JSON or Markdown. Large datasets are analyzed on a sample of up to 150 images.
+          </div>
+          <button style={btn} disabled={busy !== null} onClick={start}>{busy === "start" ? "STARTING..." : "BUILD REPORT"}</button>
+        </div>
+      )}
+      {st === "running" && (
+        <div style={{ marginTop: 10, fontSize: 12, color: "#f59e0b" }}>Building the report... this can take a minute for large datasets.</div>
+      )}
+      {st === "error" && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 10 }}>{msg || "The report failed."}</div>
+          <button style={btn} onClick={() => { setSt("idle"); setMsg(""); }}>TRY AGAIN</button>
+        </div>
+      )}
+      {st === "done" && (
+        <div style={{ marginTop: 10 }}>
+          {sum ? (
+            <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 10 }}>
+              <div>{sum.note}</div>
+              <div style={{ marginTop: 4 }}>Score {sum.avg_score ?? "n/a"} / 100 · Grade {sum.grade ?? "n/a"}</div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 10 }}>The report is ready.</div>
+          )}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button style={btn} disabled={busy !== null} onClick={() => download("html")}>{busy === "html" ? "..." : "DOWNLOAD HTML"}</button>
+            <button style={btn} disabled={busy !== null} onClick={() => download("json")}>{busy === "json" ? "..." : "JSON"}</button>
+            <button style={btn} disabled={busy !== null} onClick={() => download("md")}>{busy === "md" ? "..." : "MARKDOWN"}</button>
+          </div>
+          <div style={{ fontSize: 10, color: "#64748b", marginTop: 8 }}>The HTML report loads its charts from the internet. JSON and Markdown work offline.</div>
+        </div>
+      )}
+      {err && <div style={{ marginTop: 10, fontSize: 12, color: "#ef4444" }}>{err}</div>}
+    </div>
+  );
+}
+
+
 function CleanImagesPanel({ jobId, token, apiBase }: { jobId?: string | null; token?: string | null; apiBase: string }) {
   const [st, setSt] = useState<string>("idle");
   const [msg, setMsg] = useState<string>("");
@@ -1849,7 +1969,7 @@ function VisionLabView({ data, tab, jobId, token, apiBase }: { data: any; tab: s
     return <div style={{ ...card, color: "#ef4444", fontSize: 12 }}>Image analysis failed: {String(data.message || "unknown error")}</div>;
   }
 
-  if (data.mode === "dataset") return (<><VisionDatasetView data={data} tab={tab} />{tab === "gallery" && apiBase ? <CleanImagesPanel jobId={jobId} token={token} apiBase={apiBase} /> : null}</>);
+  if (data.mode === "dataset") return (<><VisionDatasetView data={data} tab={tab} />{tab === "gallery" && apiBase ? <><CleanImagesPanel jobId={jobId} token={token} apiBase={apiBase} /><ImageReportPanel jobId={jobId} token={token} apiBase={apiBase} /></> : null}</>);
   const q = data.quality || {};
   const img = data.image || {};
   const score = typeof q.score === "number" ? Math.round(q.score) : 0;
