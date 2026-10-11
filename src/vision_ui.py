@@ -138,6 +138,19 @@ def _thumb_n(path, size=96):
         return None
 
 
+_ISSUE_TEXT = {
+    "low_diversity": "Low image diversity (many near-identical images)",
+    "severe_imbalance": "Severe class imbalance",
+    "distribution_shift": "Distribution shift between splits",
+    "size_inconsistency": "Inconsistent image sizes",
+    "high_outlier_rate": "High rate of outlier images",
+}
+
+
+def _issue_text(s):
+    """Readable text for a raw analyzer issue name; unknown names pass through."""
+    return _ISSUE_TEXT.get(s, s)
+
 def _build_dataset_report_inner(root, name=None, max_images=300):
     """Dataset mode: folder of images -> JSON-safe report. Never raises."""
     t = time.time()
@@ -204,8 +217,8 @@ def _build_dataset_report_inner(root, name=None, max_images=300):
                 "coverage": _g(ml, "coverage_score"), "size": _g(ml, "size_score"),
                 "outlier": _g(ml, "outlier_score"),
             },
-            "priority_issues": _txts(_g(ml, "priority_issues", [])),
-            "ranked": [{"issue": _txt(r.get("issue", "")), "impact": _txt(r.get("impact", ""))}
+            "priority_issues": [_issue_text(s) for s in _txts(_g(ml, "priority_issues", []))],
+            "ranked": [{"issue": _issue_text(_txt(r.get("issue", ""))), "impact": _txt(r.get("impact", ""))}
                        for r in list(_g(ml, "recommendations_ranked", []) or [])[:6] if isinstance(r, dict)],
         }
 
