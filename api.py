@@ -3000,6 +3000,109 @@ async def download_cleaned_images(
     return FileResponse(path, media_type="application/zip", filename="cleaned_images.zip")
 
 
+# --- image report export (html / json / md) ---------------------------------
+_REPORT_JOBS: Dict[str, Dict[str, Any]] = {}   # in-process state; report files stay on disk
+_REPORT_TASKS: set = set()
+_REPORT_FORMATS = {
+    "html": ("image_report.html", "text/html"),
+    "json": ("image_report.json", "application/json"),
+    "md": ("image_report.md", "text/markdown"),
+}
+
+
+def _report_dir(job_id: str) -> Path:
+    return REPORT_DIR / f"{Path(job_id).name}_image_report"
+
+
+def _report_public(st: Dict[str, Any]) -> Dict[str, Any]:
+    return {"status": st.get("status"), "message": st.get("message", ""), "summary": st.get("summary")}
+
+
+async def _run_image_report(job_id: str, archive: Path) -> None:
+    st = _REPORT_JOBS[job_id]
+    try:
+        from src.vision_report_build import build_report_files  # noqa: PLC0415
+        work = UPLOAD_DIR / "_report" / Path(job_id).name
+        summary = await asyncio.wait_for(
+            asyncio.to_thread(build_report_files, archive, work, _report_dir(job_id)),
+            JOB_TIMEOUT_S,
+        )
+        st.update(status="done", summary=summary, message="")
+    except Exception as exc:  # noqa: BLE001
+        safe = exc.__class__.__name__ in ("ReportBuildError", "UnsafeZipError")
+        st.update(status="error", summary=None,
+                  message=str(exc) if safe else "Report failed: %s" % type(exc).__name__)
+        log.warning("Image report failed | job=%s | %s: %s", job_id, type(exc).__name__, exc)
+
+
+@app.post("/api/v1/jobs/{job_id}/image-report", status_code=202, tags=["Jobs"])
+async def start_image_report(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Build the HTML / JSON / Markdown report of an 'images' job's archive in the background."""
+    job = await _clean_owned_job(job_id, current_user, db)
+    if str(getattr(job.goal, "value", job.goal)) != "images":
+        raise HTTPException(status_code=400, detail="Only image jobs have an image report")
+    cur = _REPORT_JOBS.get(job_id)
+    if cur and (cur.get("status") == "running"
+                or (cur.get("status") == "done" and _report_dir(job_id).exists())):
+        return _report_public(cur)
+    if any(v.get("status") == "running" and v.get("user_id") == current_user.id
+           for v in _REPORT_JOBS.values()):
+        raise HTTPException(status_code=409, detail="Another image report is already running")
+    f_res = await db.execute(select(DBUploadedFile).where(DBUploadedFile.id == job.file_id))
+    file_rec = f_res.scalar_one_or_none()
+    if not file_rec:
+        raise HTTPException(status_code=404, detail="Uploaded file not found")
+    archive = Path(file_rec.storage_path)
+    if archive.suffix.lower() not in _CLEAN_ARCHIVES:
+        raise HTTPException(status_code=400, detail="The report needs a zip or tar archive of images")
+    if not archive.exists():
+        raise HTTPException(status_code=404, detail="Uploaded file is no longer on disk")
+    _REPORT_JOBS[job_id] = {"status": "running", "user_id": current_user.id, "started": time.time(),
+                            "message": "", "summary": None}
+    task = asyncio.create_task(_run_image_report(job_id, archive))
+    _REPORT_TASKS.add(task)
+    task.add_done_callback(_REPORT_TASKS.discard)
+    return _report_public(_REPORT_JOBS[job_id])
+
+
+@app.get("/api/v1/jobs/{job_id}/image-report", tags=["Jobs"])
+async def image_report_status(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _clean_owned_job(job_id, current_user, db)
+    st = _REPORT_JOBS.get(job_id)
+    if st:
+        return _report_public(st)
+    if _report_dir(job_id).exists():
+        return {"status": "done", "message": "", "summary": None}
+    return {"status": "none", "message": "", "summary": None}
+
+
+@app.get("/api/v1/jobs/{job_id}/image-report/{fmt}", tags=["Jobs"])
+async def download_image_report(
+    job_id: str,
+    fmt: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download one report file (html / json / md). Always sent as an attachment."""
+    from fastapi.responses import FileResponse  # noqa: PLC0415
+    await _clean_owned_job(job_id, current_user, db)
+    if fmt not in _REPORT_FORMATS:
+        raise HTTPException(status_code=404, detail="Unknown report format")
+    name, media = _REPORT_FORMATS[fmt]
+    path = _report_dir(job_id) / name
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No report for this job")
+    return FileResponse(path, media_type=media, filename="image_report.%s" % fmt)
+
+
 @app.delete("/api/v1/jobs/{job_id}", status_code=204, tags=["Jobs"])
 async def cancel_job(
     job_id: str,
