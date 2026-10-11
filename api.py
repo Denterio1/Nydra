@@ -1818,6 +1818,17 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 await asyncio.sleep(3600)
+                try:
+                    from src.retention import sweep_files, prune_state  # noqa: PLC0415
+                    _swept = await asyncio.to_thread(sweep_files, REPORT_DIR, UPLOAD_DIR)
+                    _pruned = prune_state([_CLEAN_JOBS, _REPORT_JOBS])
+                    if _pruned or any(_swept.values()):
+                        log.info('Retention sweep | removed %d files, %d folders, %d failed, %d state entries',
+                                 _swept['files'], _swept['dirs'], _swept['failed'], _pruned)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as _rexc:  # noqa: BLE001
+                    log.warning('Retention sweep failed: %s', type(_rexc).__name__)
                 n = await asyncio.to_thread(_chunk_store().cleanup_stale)
                 if n:
                     log.info('Chunk sweeper removed %d stale sessions', n)
