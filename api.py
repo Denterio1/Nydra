@@ -2926,7 +2926,7 @@ async def _run_clean_images(job_id: str, archive: Path) -> None:
         safe = exc.__class__.__name__ in ("CleanLimitError", "UnsafeZipError")
         st.update(status="error", summary=None,
                   message=str(exc) if safe else "Cleaning failed: %s" % type(exc).__name__)
-        log.warning("Clean images failed | job=%s | %s", job_id, type(exc).__name__)
+        log.warning("Clean images failed | job=%s | %s: %s", job_id, type(exc).__name__, exc)
 
 
 async def _clean_owned_job(job_id: str, current_user: DBUser, db: AsyncSession) -> DBJob:

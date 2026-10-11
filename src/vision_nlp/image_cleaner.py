@@ -1399,7 +1399,7 @@ class CleaningReporter:
         lines += [
             "",
             "## Sample Results (first 20)\n",
-            df_ba.head(20).to_markdown(index=False) if hasattr(df_ba, "to_markdown") else df_ba.head(20).to_string(),
+            df_ba.head(20).to_markdown(index=False) if __import__("importlib.util", fromlist=["find_spec"]).find_spec("tabulate") is not None else df_ba.head(20).to_string(),
         ]
 
         with open(path, "w", encoding="utf-8") as f:
