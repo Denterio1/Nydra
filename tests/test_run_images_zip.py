@@ -249,14 +249,26 @@ def test_downgrade_leaves_not_ready_alone(api, tmp_path, monkeypatch):
     assert res["quality"]["grade"] == "F"
 
 
-def test_known_gap_severe_imbalance_does_not_downgrade_card(api, tmp_path, monkeypatch):
-    """Documents CURRENT behaviour: the downgrade only looks at quality flags, so a
-    high score with severe imbalance still shows 'ready' on the card. If this is
-    fixed later, flip the assertion."""
+def test_severe_imbalance_flag_downgrades_ready(api, tmp_path, monkeypatch):
     rep = make_report(85, balance={"severely_imbalanced": True, "imbalance_ratio": 25.0})
     res, _, _ = run(api, tmp_path, monkeypatch, rep)
-    assert res["quality"]["verdict"] == "ready"
+    assert res["quality"]["verdict"] == "needs_work"
+    assert res["quality"]["grade"] == "C"
+    assert res["quality"]["overall_score"] == 85  # score unchanged by design
     assert "ds-q-balance" in ids(res)
+
+
+def test_severe_imbalance_in_priority_issues_downgrades_ready(api, tmp_path, monkeypatch):
+    rep = make_report(88)
+    rep["readiness"]["priority_issues"] = ["Severe class imbalance"]
+    res, _, _ = run(api, tmp_path, monkeypatch, rep)
+    assert res["quality"]["verdict"] == "needs_work"
+    assert res["quality"]["grade"] == "C"
+
+
+def test_no_imbalance_no_downgrade(api, tmp_path, monkeypatch):
+    res, _, _ = run(api, tmp_path, monkeypatch, make_report(88))
+    assert res["quality"]["verdict"] == "ready"
 
 
 # ----------------------------------------------------------------- result shape

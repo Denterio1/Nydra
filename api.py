@@ -1315,7 +1315,11 @@ async def _run_images_zip(file_path: Path, tracker: StepTracker, db: AsyncSessio
         # --- end derived issues ---
         # verdict_downgrade: one flaw affecting most images means "not ready" in practice
         _worst = max([int(_q.get(k) or 0) for k, _l, _t2 in _flags] + [0]) / _n
-        if _worst > 0.5 and verdict == "ready":
+        # imbalance_verdict: severe imbalance is a critical issue, so never "ready"
+        _sev_imb = bool(_bal.get("severely_imbalanced")) or any(
+            "severe class imbalance" in str(_p).lower() for _p in (rd.get("priority_issues") or [])
+        )
+        if (_worst > 0.5 or _sev_imb) and verdict == "ready":
             verdict = "needs_work"
             if grade in ("A", "B"):
                 grade = "C"
