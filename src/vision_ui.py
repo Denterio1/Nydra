@@ -151,6 +151,61 @@ def _issue_text(s):
     """Readable text for a raw analyzer issue name; unknown names pass through."""
     return _ISSUE_TEXT.get(s, s)
 
+_BALANCE_WEIGHT = 0.25   # image_analyzer ML-readiness weight for balance
+_SEVERE_RATIO = 5.0      # image_analyzer.SEVERE_IMBALANCE_RATIO
+
+
+def _entropy_balance(counts):
+    """Analyzer balance score: normalized Shannon entropy of class counts (0-100)."""
+    import math  # noqa: PLC0415
+    vals = [c for c in counts if c > 0]
+    if len(vals) < 2:
+        return 100.0
+    tot = float(sum(vals))
+    h = -sum((c / tot) * math.log(c / tot) for c in vals)
+    return round(100.0 * h / math.log(len(vals)), 2)
+
+
+def _score_grade(score):
+    """Same bands as image_analyzer._score_to_grade."""
+    if score >= 90:
+        return "A"
+    if score >= 75:
+        return "B"
+    if score >= 60:
+        return "C"
+    if score >= 45:
+        return "D"
+    return "F"
+
+
+def _apply_full_balance(rd, old_bal, new_bal, ratio):
+    """Re-weight the readiness score with the full-count balance sub-score.
+
+    new = old + 0.25 * (new_balance - old_balance); grade and verdict follow the
+    analyzer rules. A ratio above 5 counts as a critical (severe imbalance) issue.
+    """
+    sc = rd.get("score")
+    if not isinstance(sc, (int, float)) or not isinstance(old_bal, (int, float)):
+        rd["balance_penalty"] = 0.0
+        return
+    new = round(max(0.0, min(100.0, sc + _BALANCE_WEIGHT * (new_bal - old_bal))), 2)
+    rd["score"] = new
+    rd["grade"] = _score_grade(new)
+    rd["balance_penalty"] = round(max(0.0, sc - new), 1)
+    prio = list(rd.get("priority_issues") or [])
+    severe = ratio > _SEVERE_RATIO
+    if severe and not any("imbalance" in str(p).lower() for p in prio):
+        prio.insert(0, "Severe class imbalance")
+        rd["priority_issues"] = prio
+    critical = severe or any("shift" in str(p).lower() for p in prio)
+    if new >= 75 and not critical:
+        rd["verdict"] = "Ready"
+    elif new >= 50 or not critical:
+        rd["verdict"] = "Needs Work"
+    else:
+        rd["verdict"] = "Not Ready"
+
 def _build_dataset_report_inner(root, name=None, max_images=300):
     """Dataset mode: folder of images -> JSON-safe report. Never raises."""
     t = time.time()
@@ -431,7 +486,8 @@ def build_dataset_report(root, name=None, max_images=300):
 
         vals = list(full_counts.values())
         ratio = round(max(vals) / max(min(vals), 1), 2)
-        bal_score = round(100.0 * min(vals) / max(max(vals), 1), 1)
+        bal_score = _entropy_balance(vals)
+        _old_bal = ((rep.get("readiness") or {}).get("sub_scores") or {}).get("balance")
         rep["balance"] = dict(rep.get("balance") or {}, class_counts=full_counts, num_classes=len(vals),
                               imbalance_ratio=ratio, balance_score=bal_score,
                               majority=max(full_counts, key=full_counts.get),
@@ -439,15 +495,10 @@ def build_dataset_report(root, name=None, max_images=300):
                               suggested_augmentation={}, recommendations=[])
         rd = rep.setdefault("readiness", {})
         rd.setdefault("sub_scores", {})["balance"] = bal_score
-        penalty = 0.0
-        if ratio >= 4 and isinstance(rd.get("score"), (int, float)):
-            penalty = min(15.0, 3.0 * math.log2(ratio))
-            rd["score"] = round(max(0.0, rd["score"] - penalty), 2)
-        rd["balance_penalty"] = round(penalty, 1)
+        _apply_full_balance(rd, _old_bal, bal_score, ratio)
         rep["sample_note"] = ("Analyzed {:,} of {:,} readable images (stratified by class). Class counts, "
                               "exact duplicates and readability cover all {:,} files. The balance sub-score "
-                              "uses the full class counts; imbalance of 4x or more lowers the readiness "
-                              "score by up to 15 points.").format(analyzed, n_valid_all, found)
+                              "uses the full class counts, and the readiness score is adjusted to match.").format(analyzed, n_valid_all, found)
         rep["seconds"] = round(time.time() - t, 2)
         return rep
     except Exception as e:

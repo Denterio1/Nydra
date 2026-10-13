@@ -41,7 +41,7 @@ def test_big_dataset_cheap_pass(tmp_path, monkeypatch):
     assert rep["balance"]["class_counts"] == {"cats": 20, "dogs": 10}
     assert rep["unreadable_files"] and rep["duplicates"]["exact_flagged"] == 0
     assert not seen["root"].exists()  # temp sample folder is removed
-    assert rep["readiness"]["score"] == 90.0  # ratio 2 -> no penalty
+    assert abs(rep["readiness"]["score"] - (90.0 + 0.25 * (vision_ui._entropy_balance([20, 10]) - 100.0))) < 0.01  # re-weighted by the full-count balance (no flat penalty)
 
 
 def test_imbalance_penalty_and_exact_duplicates(tmp_path, monkeypatch):
