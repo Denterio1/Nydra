@@ -571,12 +571,14 @@ class TestWebSocket:
             # when the server closes with a policy-violation code before
             # completing the handshake in a way the client accepts.
             with client.websocket_connect("/api/v1/ws/some-job-id") as ws:
+                ws.send_json({"type": "auth"})
                 ws.receive_text()
 
     def test_ws_job_progress_nonexistent_job_closes(self, auth_headers, registered_user):
         client, _, token, _ = registered_user
         with pytest.raises(Exception):
-            with client.websocket_connect(f"/api/v1/ws/does-not-exist?token={token}") as ws:
+            with client.websocket_connect("/api/v1/ws/does-not-exist") as ws:
+                ws.send_json({"type": "auth", "token": token})
                 ws.receive_text()
 
     def test_ws_job_progress_already_terminal_job_sends_result_immediately(self, auth_headers, registered_user):
@@ -604,6 +606,7 @@ class TestWebSocket:
             time.sleep(0.1)
         assert status in ("done", "failed")
 
-        with client.websocket_connect(f"/api/v1/ws/{job_id}?token={token}") as ws:
+        with client.websocket_connect(f"/api/v1/ws/{job_id}") as ws:
+            ws.send_json({"type": "auth", "token": token})
             msg = ws.receive_json()
             assert msg["event"] in ("job_done", "job_failed")

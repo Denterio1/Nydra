@@ -566,7 +566,10 @@ class ConnectionManager:
         self._lock = asyncio.Lock()
 
     async def connect(self, job_id: str, ws: WebSocket) -> None:
-        await ws.accept()
+        from starlette.websockets import WebSocketState
+        # ws_authenticate() may already have accepted the socket
+        if ws.application_state == WebSocketState.CONNECTING:
+            await ws.accept()
         async with self._lock:
             self._connections.setdefault(job_id, set()).add(ws)
         log.info("WS connected | job=%s | total=%d", job_id, self.subscriber_count(job_id))
@@ -3156,28 +3159,22 @@ async def cancel_job(
 # ─────────────────────────────────────────────────────────────────────────────
 # ROUTES — WebSocket
 # ─────────────────────────────────────────────────────────────────────────────
+from src.ws_auth import ws_authenticate  # first-message WS auth
+
 @app.websocket("/api/v1/ws/chat")
 async def websocket_chat(
     websocket: WebSocket,
-    token: Optional[str] = Query(None),
 ):
     """
     Streaming AI chat over WebSocket.
     Client sends: {"message": "...", "job_id": "optional"}
     Server streams: {"token": "..."} chunks, then {"done": true}
     """
-    if not token:
-        await websocket.close(code=4001, reason="Missing token")
-        return
-    try:
-        payload = decode_access_token(token)
-    except HTTPException as e:
-        logger.warning(f"WS chat auth rejected: {e.detail}")
-        await websocket.close(code=4001, reason="Invalid token")
+    payload = await ws_authenticate(websocket, decode_access_token)
+    if payload is None:
         return
 
     user_id = payload.get("sub")
-    await websocket.accept()
 
     try:
         while True:
@@ -3243,27 +3240,21 @@ async def websocket_chat(
 async def websocket_job_progress(
     websocket: WebSocket,
     job_id: str,
-    token: Optional[str] = Query(None),
 ):
     """
     WebSocket endpoint for real-time job progress.
 
-    Authentication: Pass JWT as query param ?token=<access_token>
-    or use X-API-Key header before upgrade.
+    Authentication: the first message must be {"type": "auth", "token": "<access_token>"};
+    the token is never accepted in the URL.
 
     Messages are WSMessage JSON objects.
     Client can send {"type": "ping"} to keep connection alive.
     """
     # ── Auth over WS ──────────────────────────────────────────────────────
-    if not token:
-        await websocket.close(code=4001, reason="Missing auth token")
+    payload = await ws_authenticate(websocket, decode_access_token)
+    if payload is None:
         return
-    try:
-        payload = decode_access_token(token)
-        user_id = payload["sub"]
-    except HTTPException:
-        await websocket.close(code=4001, reason="Invalid auth token")
-        return
+    user_id = payload["sub"]
 
     # ── Verify job belongs to user ────────────────────────────────────────
     async with AsyncSessionLocal() as db:
@@ -3278,7 +3269,6 @@ async def websocket_job_progress(
 
     # ── If job already done, send final status immediately ────────────────
     if job.status in ("done", "failed", "cancelled"):
-        await websocket.accept()
         event_type = {
             "done": WSEventType.JOB_DONE,
             "failed": WSEventType.JOB_FAILED,

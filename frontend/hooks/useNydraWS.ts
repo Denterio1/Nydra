@@ -160,14 +160,14 @@ export interface UseNydraWSReturn {
 // UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildWsUrl(jobId: string, token: string, apiUrl?: string): string {
+function buildWsUrl(jobId: string, apiUrl?: string): string {
   const base = (
     process.env.NEXT_PUBLIC_WS_URL ??
     apiUrl?.replace(/^http/, "ws") ??
     process.env.NEXT_PUBLIC_API_URL?.replace(/^http/, "ws") ??
     "ws://localhost:8000"
   );
-  return `${base}/api/v1/ws/${jobId}?token=${encodeURIComponent(token)}`;
+  return `${base}/api/v1/ws/${jobId}`;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -396,7 +396,7 @@ export function useNydraWS({
     // Close any existing socket
     wsRef.current?.close();
 
-    const url = buildWsUrl(jobIdRef.current, tokenRef.current, apiUrlRef.current);
+    const url = buildWsUrl(jobIdRef.current, apiUrlRef.current);
     updateConnectionState(retryRef.current > 0 ? "reconnecting" : "connecting");
 
     let ws: WebSocket;
@@ -410,6 +410,8 @@ export function useNydraWS({
 
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return; }
+      // First-message auth: the token never travels in the URL.
+      ws.send(JSON.stringify({ type: "auth", token: tokenRef.current }));
       retryRef.current = 0;
       safeSetState(setRetryCount, 0);
       updateConnectionState("connected");

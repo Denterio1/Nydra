@@ -514,13 +514,17 @@ export default function ChatBox({
   // ── WS Chat connection ─────────────────────────────────────────────────
   const connectWS = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
-    const url = `${WS_BASE}/api/v1/ws/chat?token=${encodeURIComponent(token)}`;
+    const url = `${WS_BASE}/api/v1/ws/chat`;
     setWsStatus("connecting");
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
-    ws.onopen  = () => { if (mountedRef.current) setWsStatus("connected"); };
+    ws.onopen = () => {
+      // First-message auth: the token never travels in the URL.
+      ws.send(JSON.stringify({ type: "auth", token }));
+      if (mountedRef.current) setWsStatus("connected");
+    };
     ws.onclose = () => { if (mountedRef.current) setWsStatus("disconnected"); };
     ws.onerror = () => { if (mountedRef.current) setWsStatus("disconnected"); };
 
