@@ -1803,6 +1803,13 @@ async def save_upload(file: UploadFile, user_id: str) -> UploadedFileInfo:
 # RATE LIMITING (simple in-memory, swap for Redis in production)
 # ─────────────────────────────────────────────────────────────────────────────
 from src.rate_limiter import RateLimiter, upload_limiter, job_limiter, auth_limiter, chat_limiter
+from src.login_guard import FailureCounter  # login-guard
+login_ip_limiter = RateLimiter(max_calls=30, window_s=300)
+refresh_limiter  = RateLimiter(max_calls=30, window_s=60)
+google_limiter   = RateLimiter(max_calls=20, window_s=300)
+apikey_limiter   = RateLimiter(max_calls=10, window_s=3600)
+heavy_limiter    = RateLimiter(max_calls=5, window_s=600)
+login_failures   = FailureCounter(max_failures=8, window_s=300)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # APP LIFESPAN
@@ -1965,9 +1972,13 @@ async def login(
 ):
     """Login and receive JWT access + refresh tokens."""
     ip = request.client.host
-    if not auth_limiter.is_allowed(f"login:{ip}"):
+    if not login_ip_limiter.is_allowed(ip):
         await log_event(db, AuditEventType.RATE_LIMIT_HIT, ip=ip, detail="login rate limit")
         raise HTTPException(status_code=429, detail="Too many login attempts. Wait 5 minutes.")
+    _login_key = body.username.lower()  # login-guard
+    if login_failures.is_blocked(_login_key):
+        await log_event(db, AuditEventType.RATE_LIMIT_HIT, ip=ip, detail="login account lockout")
+        raise HTTPException(status_code=429, detail="Too many failed attempts for this account. Wait 5 minutes.")
 
     result = await db.execute(
         select(DBUser).where(
@@ -1976,6 +1987,7 @@ async def login(
     )
     user   = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.hashed_password):
+        login_failures.add(_login_key)
         await log_event(
             db, AuditEventType.LOGIN_FAILED, ip=ip,
             user_id=(user.id if user else None),
@@ -1986,6 +1998,7 @@ async def login(
         await log_event(db, AuditEventType.LOGIN_FAILED, user_id=user.id, ip=ip, detail="account deactivated")
         raise HTTPException(status_code=403, detail="Account deactivated")
 
+    login_failures.clear(_login_key)
     access_token               = make_access_token(user.id, user.username)
     raw_refresh, refresh_exp   = make_refresh_token(user.id)
 
@@ -2008,8 +2021,10 @@ async def login(
 
 
 @app.post("/api/v1/auth/refresh", response_model=TokenResponse, tags=["Auth"])
-async def refresh_token(body: TokenRefresh, db: AsyncSession = Depends(get_db)):
+async def refresh_token(body: TokenRefresh, request: Request, db: AsyncSession = Depends(get_db)):
     """Exchange a refresh token for a new access token."""
+    if not refresh_limiter.is_allowed(request.client.host):
+        raise HTTPException(status_code=429, detail="Too many refresh attempts")
     token_hash = sha256(body.refresh_token)
     result     = await db.execute(
         select(DBRefreshToken).where(
@@ -2232,12 +2247,14 @@ async def google_callback(code: Optional[str] = Query(None), state: Optional[str
 
 
 @app.post("/api/v1/auth/google/exchange", response_model=TokenResponse, tags=["Auth"])
-async def google_exchange(body: GoogleExchangeRequest, db: AsyncSession = Depends(get_db)):
+async def google_exchange(body: GoogleExchangeRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """
     Step 3: the opener window (Auth.tsx) POSTs the code it received via
     postMessage. We exchange it server-side for the Google profile,
     find-or-create the Nydra user, and issue normal Nydra JWT tokens.
     """
+    if not google_limiter.is_allowed(request.client.host):
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts")
     profile = await _exchange_google_code(body.code)
     user    = await _get_or_create_google_user(db, profile)
 
@@ -2272,6 +2289,8 @@ async def create_api_key(
     current_user: DBUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not apikey_limiter.is_allowed(current_user.id):
+        raise HTTPException(status_code=429, detail="Too many API keys created")
     raw_key  = API_KEY_PREFIX + secrets.token_urlsafe(32)
     key_hash = sha256(raw_key)
     expires  = datetime.utcnow() + timedelta(days=body.expires_in) if body.expires_in else None
@@ -2970,6 +2989,8 @@ async def start_clean_images(
     job = await _clean_owned_job(job_id, current_user, db)
     if str(getattr(job.goal, "value", job.goal)) != "images":
         raise HTTPException(status_code=400, detail="Only image jobs can be cleaned")
+    if not heavy_limiter.is_allowed(current_user.id):
+        raise HTTPException(status_code=429, detail="Too many heavy jobs. Try again in a few minutes.")
     cur = _CLEAN_JOBS.get(job_id)
     if cur and (cur.get("status") == "running"
                 or (cur.get("status") == "done" and _clean_zip_path(job_id).exists())):
@@ -3068,6 +3089,8 @@ async def start_image_report(
     job = await _clean_owned_job(job_id, current_user, db)
     if str(getattr(job.goal, "value", job.goal)) != "images":
         raise HTTPException(status_code=400, detail="Only image jobs have an image report")
+    if not heavy_limiter.is_allowed(current_user.id):
+        raise HTTPException(status_code=429, detail="Too many heavy jobs. Try again in a few minutes.")
     cur = _REPORT_JOBS.get(job_id)
     if cur and (cur.get("status") == "running"
                 or (cur.get("status") == "done" and _report_dir(job_id).exists())):
