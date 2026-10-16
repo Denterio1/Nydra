@@ -1739,7 +1739,11 @@ def detect_file_type(filename: str) -> FileType:
 
 async def save_upload(file: UploadFile, user_id: str) -> UploadedFileInfo:
     """Chunk-reads the upload, deduplicates by SHA256, returns file info."""
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    clean = sanitize_filename(file.filename)  # fn-sanitize
+    if clean.rejected or not clean.value:
+        raise HTTPException(status_code=400, detail="Invalid file name.")
+    safe_name = clean.value
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=422,
@@ -1786,8 +1790,8 @@ async def save_upload(file: UploadFile, user_id: str) -> UploadedFileInfo:
 
     return UploadedFileInfo(
         file_id=file_id,
-        filename=file.filename,
-        file_type=detect_file_type(file.filename),
+        filename=safe_name,
+        file_type=detect_file_type(safe_name),
         size_bytes=size,
         size_mb=round(size / (1024 * 1024), 3),
         checksum=checksum,
