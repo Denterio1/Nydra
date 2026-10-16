@@ -82,6 +82,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy import func  # ci-lookup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -1930,7 +1931,7 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
 
     existing = await db.execute(
         select(DBUser).where(
-            (DBUser.username == body.username) | (DBUser.email == body.email)
+            (func.lower(DBUser.username) == body.username.lower()) | (func.lower(DBUser.email) == body.email.lower())
         )
     )
     if existing.scalar_one_or_none():
@@ -1943,7 +1944,7 @@ async def register(body: UserRegister, request: Request, db: AsyncSession = Depe
     user = DBUser(
         id=str(uuid.uuid4()),
         username=body.username,
-        email=body.email,
+        email=body.email.lower(),
         hashed_password=hash_password(body.password),
         settings=UserSettings().model_dump(),
     )
@@ -1966,7 +1967,7 @@ async def login(
 
     result = await db.execute(
         select(DBUser).where(
-            or_(DBUser.username == body.username, DBUser.email == body.username)
+            or_(func.lower(DBUser.username) == body.username.lower(), func.lower(DBUser.email) == body.username.lower())
         )
     )
     user   = result.scalar_one_or_none()
@@ -2133,7 +2134,7 @@ async def _get_or_create_google_user(db: AsyncSession, profile: Dict[str, Any]) 
         return user
 
     # 2. Existing email/password account — link Google to it
-    result = await db.execute(select(DBUser).where(DBUser.email == email))
+    result = await db.execute(select(DBUser).where(func.lower(DBUser.email) == email.lower()))
     user = result.scalar_one_or_none()
     if user:
         await db.execute(
@@ -2151,7 +2152,7 @@ async def _get_or_create_google_user(db: AsyncSession, profile: Dict[str, Any]) 
     username = base_username
     suffix = 0
     while True:
-        existing = await db.execute(select(DBUser).where(DBUser.username == username))
+        existing = await db.execute(select(DBUser).where(func.lower(DBUser.username) == username.lower()))
         if not existing.scalar_one_or_none():
             break
         suffix += 1
@@ -2160,7 +2161,7 @@ async def _get_or_create_google_user(db: AsyncSession, profile: Dict[str, Any]) 
     user = DBUser(
         id=str(uuid.uuid4()),
         username=username,
-        email=email,
+        email=email.lower(),
         hashed_password=None,
         google_id=google_id,
         profile_image=picture,
