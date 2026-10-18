@@ -2118,7 +2118,7 @@ async def _exchange_google_code(code: str) -> Dict[str, Any]:
             },
         )
         if token_resp.status_code != 200:
-            log.warning("Google token exchange failed: %s", token_resp.text)
+            log.warning("Google token exchange failed: status=%s body=%.200s", token_resp.status_code, token_resp.text)
             raise HTTPException(status_code=401, detail="Google sign-in failed (token exchange)")
 
         access_token = token_resp.json().get("access_token")
