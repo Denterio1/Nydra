@@ -308,7 +308,8 @@ class MasterKeyDeriver:
             if self._cache is not None:
                 return self._cache
 
-            password = self._get_system_fingerprint()
+            _env_key = os.getenv("NYDRA_VAULT_KEY", "")  # vaultkey-env
+            password = _env_key.encode("utf-8") if _env_key else self._get_system_fingerprint()
 
             kdf = PBKDF2HMAC(
                 algorithm  = hashes.SHA256(),
