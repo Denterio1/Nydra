@@ -694,6 +694,7 @@ class ConnectionManager:
         )
 
 
+from src import quotas as _quotas  # quotas
 ws_manager = ConnectionManager()
 
 
@@ -1831,7 +1832,8 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             log.warning('Text warm-up skipped: %s', type(exc).__name__)
     import threading as _threading
-    _threading.Thread(target=_warm_text_models, daemon=True, name='text-warmup').start()
+    if os.getenv('NYDRA_SKIP_WARMUP', '') != '1':  # warmup-switch
+        _threading.Thread(target=_warm_text_models, daemon=True, name='text-warmup').start()
     # chunk_sweeper: remove abandoned chunk-upload sessions every hour
     async def _chunk_sweeper():
         while True:
@@ -1855,6 +1857,12 @@ async def lifespan(app: FastAPI):
                 raise
             except Exception as exc:
                 log.warning('Chunk sweeper failed: %s', type(exc).__name__)
+    try:  # quotas
+        _stale_n = await _quotas.reset_stale_jobs(AsyncSessionLocal, DBJob)
+        if _stale_n:
+            log.warning('Marked %d interrupted jobs as failed at startup', _stale_n)
+    except Exception as _qexc:  # noqa: BLE001
+        log.warning('Stale job reset failed: %s', type(_qexc).__name__)
     _sweeper_task = asyncio.create_task(_chunk_sweeper())
     log.info("✅ Database ready | ✅ Job queue running (%d workers)", WORKER_COUNT)
     yield
@@ -2504,6 +2512,7 @@ async def upload_file(
     if not upload_limiter.is_allowed(current_user.id):
         await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="upload rate limit")
         raise HTTPException(status_code=429, detail="Upload rate limit exceeded (20/min)")
+    await _quotas.enforce_storage(db, DBUploadedFile, current_user.id, _quotas.declared_size(request))  # quotas
     file_info = await save_upload(file, current_user.id)
 
     db.add(DBUploadedFile(
@@ -2533,6 +2542,7 @@ async def upload_multi(
     if not upload_limiter.is_allowed(current_user.id):
         await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="train/test upload rate limit")
         raise HTTPException(status_code=429, detail="Upload rate limit exceeded")
+    await _quotas.enforce_storage(db, DBUploadedFile, current_user.id, _quotas.declared_size(request))  # quotas
     train_info, test_info = await asyncio.gather(
         save_upload(train_file, current_user.id),
         save_upload(test_file, current_user.id),
@@ -2584,6 +2594,7 @@ async def chunk_upload_init(
     if not upload_limiter.is_allowed(current_user.id):
         await log_event(db, AuditEventType.RATE_LIMIT_HIT, user_id=current_user.id, detail="chunk upload init rate limit")
         raise HTTPException(status_code=429, detail="Upload rate limit exceeded")
+    await _quotas.enforce_storage(db, DBUploadedFile, current_user.id, body.total_size)  # quotas
     clean = sanitize_filename(body.filename)
     if clean.rejected or not clean.value:
         raise HTTPException(status_code=400, detail="Invalid file name.")
@@ -2745,6 +2756,7 @@ async def create_job(
     if not file_rec:
         raise HTTPException(status_code=404, detail=f"File '{file_id}' not found")
 
+    await _quotas.enforce_job_caps(db, DBJob, current_user.id, job_queue.queue_depth(), JOB_TIMEOUT_S)  # quotas
     job_id   = str(uuid.uuid4())
     step_plan = _build_step_plan(body.goal)
     steps    = [

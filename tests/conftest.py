@@ -8,6 +8,7 @@ belong in that file instead.
 """
 
 import os
+os.environ.setdefault("NYDRA_SKIP_WARMUP", "1")  # tests never load text models
 import sys
 import time
 
