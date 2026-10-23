@@ -58,3 +58,4 @@ probe_dataset/
 probe_images/
 skew_ds/
 huge_test.zip
+.env.docker

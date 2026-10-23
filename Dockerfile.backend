@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=8000 \
+    HOST=0.0.0.0 \
+    ENV=production
+
+WORKDIR /app
+
+RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements-docker.txt .
+RUN pip install --default-timeout=100 --retries 10 -r requirements-docker.txt
+
+COPY . .
+
+RUN useradd -m -u 1000 nydra && mkdir -p /data && chown -R nydra:nydra /app /data
+USER nydra
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')" || exit 1
+
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+
+
+
+
