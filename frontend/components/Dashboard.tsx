@@ -1335,11 +1335,63 @@ export default function Dashboard({
     messages,
   } = useNydraWS(wsOptions);
 
+  // poll-fallback: a short job must not depend on the WebSocket winning the race
+  useEffect(() => {
+    if (!jobId || !token) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const authHeaders = { Authorization: `Bearer ${token}` };
+    const tick = async () => {
+      if (stopped || resultFetched.current) {
+        if (timer) clearInterval(timer);
+        return;
+      }
+      try {
+        const sres = await fetch(`${API_BASE}/api/v1/jobs/${jobId}`, { headers: authHeaders });
+        if (!sres.ok) return;
+        const job = await sres.json();
+        if (job.status === "failed" || job.status === "cancelled") {
+          stopped = true;
+          if (timer) clearInterval(timer);
+          return;
+        }
+        if (job.status !== "done" || resultFetched.current) return;
+        resultFetched.current = true;
+        setIsLoadingResult(true);
+        try {
+          const rres = await fetch(`${API_BASE}/api/v1/jobs/${jobId}/result`, { headers: authHeaders });
+          if (rres.ok) {
+            setResultData(await rres.json());
+            stopped = true;
+          } else {
+            resultFetched.current = false;
+          }
+        } catch {
+          resultFetched.current = false;
+        } finally {
+          setIsLoadingResult(false);
+        }
+      } catch {
+        /* network blip: the next tick retries */
+      }
+    };
+    const start = setTimeout(() => {
+      void tick();
+      timer = setInterval(() => void tick(), 1500);
+    }, 1000);
+    return () => {
+      stopped = true;
+      clearTimeout(start);
+      if (timer) clearInterval(timer);
+    };
+  }, [jobId, token]);
+
   const jobProgress = progress?.progress ?? 0;
-  const isDone      = connectionState === "closed" && result !== null;
-  const isFailed    = (connectionState === "closed" && error !== null) || connectionState === "error";
-  const isCancelled = connectionState === "closed" && result === null && error === null;
-  const isRunning   = connectionState === "connected" || connectionState === "reconnecting" || connectionState === "connecting";
+  // result-override: a loaded result beats a socket error
+  const isDone      = resultData !== null || (connectionState === "closed" && result !== null);
+  const isFailed    = resultData === null && ((connectionState === "closed" && error !== null) || connectionState === "error");
+  const isCancelled = resultData === null && (connectionState === "closed" && result === null && error === null);
+  const isRunning   = resultData === null && (connectionState === "connected" || connectionState === "reconnecting" || connectionState === "connecting");
 
   const wsWarnings  = messages
     .filter((m) => m.event === "warning")
