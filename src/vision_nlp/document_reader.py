@@ -17,7 +17,6 @@ Advanced Document Reading & Extraction Pipeline.
 Author  : Nydra Team
 GitHub  : https://github.com/Denterio1/Nydra
 Version : 0.6.0
-Date    : April 2026
 """
 
 from __future__ import annotations
@@ -962,8 +961,7 @@ class DOCXReader:
             "created":          _dt(cp.created),
             "modified":         _dt(cp.modified),
             "category":         cp.category or "",
-            "description":      cp.description or "",
-        }
+            "description":      getattr(cp, "comments", "")  or "",        }
 
     def _heading_level(self, style_name: str) -> Optional[int]:
         """Extract heading level from style name, e.g. 'Heading 2' → 2."""
