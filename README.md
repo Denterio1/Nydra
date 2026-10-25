@@ -344,11 +344,29 @@ Nydra is an early release. What works and what doesn't:
 
 ## Security Notes
 
-- API keys and other secrets are encrypted at rest and are never logged or returned in plaintext.
-- If you fork or self-host Nydra, verify your own environment's secret handling before deploying — in particular, ensure any database credentials (e.g. Supabase Row Level Security policies, if used) are configured correctly for your deployment.
-- Report security concerns privately rather than via a public issue.
+**What is built in**
 
----
+- **Secrets:** LLM provider keys are encrypted at rest (key derived from `NYDRA_VAULT_KEY`), shown only masked, and never logged. Nydra API keys are stored as SHA-256 hashes. JWTs are signed with a fixed `SECRET_KEY`.
+- **Authentication:** WebSocket tokens are sent in the first message, never in the URL. Usernames and emails are compared case-insensitively. Login and password fields have length limits.
+- **Abuse protection:** per-IP login limits, a failure-only account lockout (8 bad logins, 5 minutes), and rate limits on register, refresh, Google sign-in, API-key creation, uploads, jobs, chat and the heavy image routes.
+- **Resource limits:** per-user storage quota, per-user active-job cap, and a global queue cap. Interrupted jobs are marked failed at startup. Old reports and temp files are cleaned up automatically.
+- **Uploads:** client filenames are sanitized on every upload path. Zip and tar archives are extracted with path-traversal, entry-count, size and expansion-ratio checks. Generated reports are always served as downloads, never inline.
+- **Outbound requests:** custom LLM base URLs are checked against SSRF at save time and at request time.
+
+**If you self-host**
+
+- Set `NYDRA_VAULT_KEY`, `NYDRA_VAULT_SALT` and `SECRET_KEY` to long random values, keep them out of git, and back them up. Changing the vault values later makes stored LLM keys unreadable.
+- Per-IP limits rely on your reverse proxy passing the real client address. Verify this in your own deployment.
+- If you use Supabase, configure Row Level Security for your own project.
+
+**Known limits**
+
+- Nydra has not had an independent security audit.
+- The account lockout means someone who knows a username can lock that account for 5 minutes.
+
+**Reporting a vulnerability**
+
+Please report security issues privately through GitHub's "Report a vulnerability" option on this repository, as described in [SECURITY.md](SECURITY.md), not through a public issue.
 
 ## Contributing
 
