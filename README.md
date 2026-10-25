@@ -164,7 +164,7 @@ The frontend will be available at `http://localhost:3000` and will communicate w
 For scripted or headless analysis without the web app:
 
 ```bash
-python cli.py inspect examples/sample_sales.csv
+python cli.py inspect examples/demo_sales.csv
 python cli.py interactive   # guided mode, no flags required
 python cli.py --help        # full command list
 ```
@@ -255,8 +255,10 @@ Run `python cli.py --help` for the complete, current list.
 Nydra/
 ├── api.py                      ← FastAPI backend (REST + WebSocket)
 ├── cli.py                      ← Command-line interface
-├── requirements.txt
-├── Dockerfile / docker-compose.yml
+├── requirements-docker.txt     ← Pinned dependencies (used by the Docker image)
+├── Dockerfile.backend, docker-compose.yml, Caddyfile
+├── examples/                   ← Generated demo files
+├── scripts/                    ← Scripts that generate them
 │
 ├── frontend/                   ← Next.js / React web app
 │
@@ -268,6 +270,9 @@ Nydra/
 │   ├── auth.py                 ← JWT + Google OAuth
 │   ├── api_schemas.py          ← Pydantic models
 │   ├── nydra_core.py           ← Bindings to the Rust statistics engine
+│   ├── vision_ui.py, text_ui.py, distributions_ui.py  ← Workspace report builders
+│   ├── zip_safe.py, tar_safe.py    ← Safe archive extraction
+│   ├── quotas.py, login_guard.py, ws_auth.py, retention.py  ← Limits, lockout, WebSocket auth, cleanup
 │   │
 │   ├── data/
 │   │   ├── loader.py, analyzer.py, cleaner.py, preparator.py
@@ -288,12 +293,7 @@ Nydra/
 │       └── data_leakage.py, label_quality.py, bias_detector.py
 │           training_readiness.py, audit_orchestrator.py
 │
-└── tests/
-    ├── conftest.py
-    ├── test_nydra.py
-    ├── test_nydra_core.py
-    ├── test_audit_layer.py
-    └── test_api.py
+└── tests/                      ← pytest suite (800+ tests): pipeline, API, security, vision, text
 ```
 
 ---
