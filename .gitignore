@@ -32,7 +32,13 @@ debug_test.db
 git_status_full.txt
 
 # ── Large binary datasets (don't bloat repo history) ──
-examples/
+examples/*
+!examples/demo_sales.csv
+!examples/demo_churn.csv
+!examples/demo_messy_text.txt
+!examples/demo_images.zip
+!examples/demo_report.pdf
+!examples/demo_report.docx
 mnist-dataset.zip
 
 # ── IDE (in case something slips through despite .idea/ above) ──
