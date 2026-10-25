@@ -318,7 +318,7 @@ Place downloaded files under `examples/` (already excluded from version control)
 
 Nydra is an early release. What works and what doesn't:
 
-- **Formats:** CSV/Excel/JSON/Parquet tables, PDF, DOCX, TXT and Markdown documents, and images (single files or zip/tar archives) are supported and tested. HTML and legacy `.doc` are not supported; `.doc` is accepted by the uploader but untested.
+- **Formats:** CSV/Excel/JSON/Parquet tables, PDF, DOCX, TXT and Markdown documents, and images (single files or zip/tar archives) are supported and tested. HTML and legacy `.doc` are not supported.
 - **Text report:** the full quality report is English-only.
 - **Images:** analysis runs on a stratified sample of 150 images per archive. Tested up to about 360 images; archives with thousands of full-size photos have not been timed. Cleaning is capped at 3,000 images.
 - **Tables:** the web UI runs the inspection pipeline (cleaning, outliers, ML readiness). Other goals such as AutoML exist in the code but are not exposed in the UI yet.
