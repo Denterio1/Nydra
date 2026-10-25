@@ -674,6 +674,26 @@ class RecommendationsSection:
 #           Uses inline Plotly JSON — no external dependencies.
 # ─────────────────────────────────────────────────────────────────────────────
 
+_PLOTLY_TAG_CACHE = None
+
+
+def _plotly_script_tag():
+    """Inline the Plotly bundle shipped with the installed package, so the
+    HTML report works offline. Falls back to the CDN if the file is missing."""
+    global _PLOTLY_TAG_CACHE
+    if _PLOTLY_TAG_CACHE is None:
+        try:
+            import os
+            import plotly
+            path = os.path.join(os.path.dirname(plotly.__file__),
+                                "package_data", "plotly.min.js")
+            with open(path, encoding="utf-8") as f:
+                _PLOTLY_TAG_CACHE = "<script>" + f.read() + "</script>"
+        except Exception:
+            return '<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>'
+    return _PLOTLY_TAG_CACHE
+
+
 class HTMLExporter:
     """
     Produces a self-contained HTML report with embedded Plotly charts.
@@ -1041,7 +1061,7 @@ class HTMLExporter:
             )
             fig_json = fig.to_json()
             return f"""
-<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+{_plotly_script_tag()}
 <script>
   var figData = {fig_json};
   Plotly.newPlot('quality-chart', figData.data, figData.layout, {{responsive: true}});
