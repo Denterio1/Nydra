@@ -91,11 +91,10 @@ The platform is accessible through three interfaces:
 - **Advanced statistics** — normality testing, distribution fitting across 20 candidate distributions, hypothesis testing with automatic parametric/non-parametric selection, and transformation recommendations
 
 ### Vision & Document Intelligence (v0.6.0)
-- Image dataset analysis: quality scoring, duplicate detection (perceptual hashing), automated cleaning and normalization
-- Document ingestion: PDF, DOCX, TXT, HTML, and Markdown
-- Text analysis: readability, sentiment, topic modeling, keyword extraction, named entity recognition
-- Training data auditing: leakage detection, label quality, bias and fairness metrics, and an overall training-readiness score
-
+- Image dataset analysis (single image, or a zip/tar archive): quality scoring, duplicate detection (perceptual hashing), class balance, a readiness score, a cleaned-images download, and an HTML/JSON/Markdown report. Large archives are analyzed on a stratified sample of 150 images.
+- Document ingestion: PDF, DOCX, TXT and Markdown
+- Text analysis: readability, sentiment, topic modeling, keyword extraction, named entity recognition, and a text-quality report (the full report is English-only)
+- Training data auditing modules: leakage detection, label quality, bias and fairness metrics, and a training-readiness score
 ### AI Assistant
 - A built-in chat assistant with full multi-turn memory, connected to a real LLM of your choice (see [AI Chat & LLM Providers](#ai-chat--llm-providers))
 - Context-aware: can reference the results of a job you've already run
@@ -103,6 +102,27 @@ The platform is accessible through three interfaces:
 ---
 
 ## Getting Started
+### Docker quick start (recommended)
+
+Needs Docker with Compose and about 5 GB of free RAM. The first build downloads PyTorch and takes a while (the backend image is about 3 GB).
+
+```bash
+git clone https://github.com/Denterio1/Nydra.git
+cd Nydra
+cp .env.docker.example .env.docker
+```
+
+Edit `.env.docker` and replace every `CHANGE_ME` with its own random value (`openssl rand -hex 32`). Back this file up and never commit it: changing `NYDRA_VAULT_KEY` or `NYDRA_VAULT_SALT` later makes saved LLM provider keys unreadable.
+
+```bash
+docker compose up -d --build
+```
+
+When `docker compose ps` shows the backend as `healthy` (about two minutes, while the text models warm up), open **http://localhost:8080**.
+
+Data (database, uploads, reports) lives in the `nydra-data` Docker volume and survives restarts. Do not run `docker compose down -v` unless you want to delete it.
+
+To run without Docker, use the manual install below.
 
 ### Requirements
 - Python 3.11+
@@ -294,8 +314,20 @@ Place downloaded files under `examples/` (already excluded from version control)
 
 ---
 
-## Roadmap
+## Current Limits
 
+Nydra is an early release. What works and what doesn't:
+
+- **Formats:** CSV/Excel/JSON/Parquet tables, PDF, DOCX, TXT and Markdown documents, and images (single files or zip/tar archives) are supported and tested. HTML and legacy `.doc` are not supported; `.doc` is accepted by the uploader but untested.
+- **Text report:** the full quality report is English-only.
+- **Images:** analysis runs on a stratified sample of 150 images per archive. Tested up to about 360 images; archives with thousands of full-size photos have not been timed. Cleaning is capped at 3,000 images.
+- **Tables:** the web UI runs the inspection pipeline (cleaning, outliers, ML readiness). Other goals such as AutoML exist in the code but are not exposed in the UI yet.
+- **Docker setup:** built for `http://localhost:8080`. The API address is baked into the frontend image at build time, so running on a server needs a different `NEXT_PUBLIC_API_URL` in `docker-compose.yml` and a rebuild. There is no HTTPS yet (Caddy serves plain HTTP).
+- **Demo limits:** 200 MB per direct upload, 0.5 GB chunked, 2 GB stored per user, 2 active jobs per user. Defaults can be changed in `.env.docker`.
+- **Scale:** SQLite, one backend process, job state held in memory. A restart marks running jobs as failed. Not load tested.
+- **Google login** needs your own OAuth client configured; it is not set up in the Docker defaults.
+
+## Roadmap
 | Version | Highlights | Status |
 |---|---|---|
 | v0.1.0 – v0.4.0 | Core inspection, cleaning, ML prep, feature engineering, schema validation, cognitive DNA | ✅ |
