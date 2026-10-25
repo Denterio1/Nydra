@@ -133,8 +133,11 @@ To run without Docker, use the manual install below.
 ```bash
 git clone https://github.com/Denterio1/Nydra.git
 cd Nydra
-pip install -r requirements.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-docker.txt
 cd frontend && npm install && cd ..
+
+`requirements-docker.txt` is the tested dependency list (it is what the Docker image uses). Docker is the recommended way to run Nydra.
 ```
 
 ### Running the full application
@@ -292,14 +295,14 @@ Nydra/
 ```
 
 ---
-
 ## Testing
 
 ```bash
-pytest tests/ -v
+pip install pytest
+pytest tests/ -q
 ```
 
-The suite covers the core pipeline, the Rust/Python statistics engine, the vision/text audit layer, and the full FastAPI backend (auth, jobs, WebSocket, settings).
+The suite has over 800 tests and takes about 10 minutes. It covers the core pipeline, the Rust/Python statistics engine, the vision/text audit layer, the document readers, and the full FastAPI backend (auth, jobs, WebSocket, quotas, rate limits, settings). Text-model warm-up is switched off automatically during tests.
 
 ---
 
