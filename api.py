@@ -37,6 +37,7 @@ from src.security_vault import get_vault as get_security_vault
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from src import hard_delete as _hd  # hard-delete
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from urllib.parse import urlencode
@@ -2724,6 +2725,20 @@ async def delete_file(
         update(DBUploadedFile).where(DBUploadedFile.id == file_id).values(is_deleted=True)
     )
     await db.commit()
+    # hard-delete: remove the stored file unless another live row of this user shares it
+    try:
+        _shared = await db.execute(
+            select(DBUploadedFile.id).where(
+                DBUploadedFile.user_id == current_user.id,
+                DBUploadedFile.storage_path == f.storage_path,
+                DBUploadedFile.id != file_id,
+                DBUploadedFile.is_deleted.isnot(True),
+            ).limit(1)
+        )
+        if _shared.first() is None:
+            _hd.safe_unlink(f.storage_path, UPLOAD_DIR)
+    except Exception as exc:
+        log.warning("Hard delete of file failed | %s: %s", type(exc).__name__, exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3194,6 +3209,39 @@ async def cancel_job(
             payload={"cancelled_by": current_user.username, "force": not cancelled},
         ),
     )
+
+
+# hard-delete: real deletion of a job, its result and its report files
+from src import hard_delete as _hd
+
+
+@app.delete("/api/v1/jobs/{job_id}/data", status_code=204, tags=["Jobs"])
+async def delete_job_data(
+    job_id: str,
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a finished job, its stored result and its report files."""
+    result = await db.execute(
+        select(DBJob).where(DBJob.id == job_id, DBJob.user_id == current_user.id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("pending", "running"):
+        raise HTTPException(status_code=409, detail="Cancel the job before deleting its data")
+    for _state in (_CLEAN_JOBS, _REPORT_JOBS):
+        if (_state.get(job_id) or {}).get("status") == "running":
+            raise HTTPException(status_code=409, detail="A report or cleaning is still running")
+    from sqlalchemy import delete as _sa_delete
+    await db.execute(_sa_delete(DBJob).where(DBJob.id == job_id, DBJob.user_id == current_user.id))
+    await db.commit()
+    _CLEAN_JOBS.pop(job_id, None)
+    _REPORT_JOBS.pop(job_id, None)
+    try:
+        await asyncio.to_thread(_hd.remove_job_artifacts, job_id, REPORT_DIR, UPLOAD_DIR)
+    except Exception as exc:
+        log.warning("Job artifact cleanup failed | %s: %s", type(exc).__name__, exc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
