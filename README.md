@@ -385,6 +385,8 @@ Nydra is an early release. What works and what doesn't:
 
 Please report security issues privately through GitHub's "Report a vulnerability" option on this repository, as described in [SECURITY.md](SECURITY.md), not through a public issue.
 
+What Nydra stores, how long it keeps it, and how to delete your data: see [PRIVACY.md](PRIVACY.md).
+
 ## Contributing
 
 Pull requests are welcome. For significant changes, please open an issue first to discuss the approach.
