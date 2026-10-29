@@ -1086,6 +1086,7 @@ def _build_step_plan(goal: JobGoal) -> List[Dict[str, str]]:
             {"name": "Report",            "description": "Generating document analysis report"},
         ],
     }
+    plans[JobGoal.DNA] = [*base, {"name": "DNA", "description": "Computing the dataset Cognitive DNA"}]  # dna-goal
     return plans.get(goal, base)
 
 def _sanitize_for_json(obj):
@@ -1529,6 +1530,13 @@ def _dispatch_step(
         return {"_df_path": str(file_path), "rows": len(df), "columns": len(df.columns)}
         
 
+
+    if step_name == "DNA":  # dna-goal
+        df = _load_dataframe(file_path)
+        if df is None:
+            return {}
+        from src.data.cognitive_dna import compute_dna  # noqa: PLC0415
+        return {"dna": compute_dna(df).to_dict()}
 
     # All other steps delegate to the agent
     if "step_log" in accumulated:

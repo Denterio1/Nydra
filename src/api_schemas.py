@@ -64,6 +64,7 @@ class JobGoal(str, Enum):
     AUDIT           = "audit"
     IMAGES          = "images"
     TEXT_DOCS       = "text_docs"
+    DNA             = "dna"
 
 
 class FileType(str, Enum):
