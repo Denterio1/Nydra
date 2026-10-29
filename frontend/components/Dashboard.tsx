@@ -1509,14 +1509,14 @@ export default function Dashboard({
             ))}
             {onNewAnalysis && (
               <button onClick={onNewAnalysis} style={{
-                padding: "6px 14px", borderRadius: 5, cursor: "pointer",
+                padding: "9px 20px", borderRadius: 5, cursor: "pointer",
                 background: "rgba(0,212,170,0.08)",
                 border: "1px solid rgba(0,212,170,0.3)",
                 fontFamily: "JetBrains Mono, monospace",
-                fontSize: 9, fontWeight: 700, letterSpacing: 1,
+                fontSize: 11, fontWeight: 700, letterSpacing: 1,
                 color: "#00d4aa",
               }}>
-                + NEW
+                + NEW SCAN
               </button>
             )}
           </div>

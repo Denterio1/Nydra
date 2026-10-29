@@ -106,7 +106,7 @@ const ALLOWED_EXTENSIONS = new Set([
   "png","jpg","jpeg","webp","bmp","tiff","tif","gif","heic","zip","tar","tgz","gz",
 ]);
 
-const MAX_SIZE_MB   = 10240;
+const MAX_SIZE_MB   = Number(process.env.NEXT_PUBLIC_MAX_UPLOAD_MB) || 10240;
 const MAX_DIRECT_MB = 500;
 const CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
 const CHUNK_SIZE_BYTES      = 16 * 1024 * 1024;
@@ -1341,7 +1341,7 @@ export default function Uploader({
         fontSize: 9, color: "#1e293b", letterSpacing: 0.5,
         paddingTop: 4, borderTop: "1px solid rgba(30,41,59,0.6)",
       }}>
-        <span>MAX {MAX_SIZE_MB}MB · SHA256 VERIFIED · E2E ENCRYPTED</span>
+        <span>MAX {MAX_SIZE_MB}MB · SHA256 VERIFIED</span>
         <span>NYDRA v0.5.5</span>
       </div>
     </div>

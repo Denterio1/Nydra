@@ -14,6 +14,7 @@ services:
       context: frontend
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8080
+        NEXT_PUBLIC_MAX_UPLOAD_MB: "512"
     image: nydra-frontend
     restart: always
 
