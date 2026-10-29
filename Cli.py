@@ -1649,7 +1649,7 @@ def cmd_dna(args: list[str]) -> None:
     print()
 
     try:
-        dna = CognitiveDNA(data, target_col=target)
+        dna = CognitiveDNA(data["df"], target_col=target)
 
         print(c("  ── Identity ─────────────────────────────────────────", CYAN))
         print(f"  {c('DNA Hash', BOLD)}    : {c(dna.short_hash, GREEN)}")
