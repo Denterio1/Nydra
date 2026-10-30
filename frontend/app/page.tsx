@@ -20,7 +20,7 @@ function getTokenExpiry(jwt: string): number | null {
 }
 
 type AppState = "IDLE" | "PROCESSING" | "RESULTS";
-type Workspace = "DIAGNOSTICS" | "VISION_LAB" | "TEXT_INTELLIGENCE" | "REPAIR_SHOP";
+type Workspace = "DIAGNOSTICS" | "VISION_LAB" | "TEXT_INTELLIGENCE" | "REPAIR_SHOP" | "DNA";
 
 export default function NydraApp() {
   const [state, setState] = useState<AppState>("IDLE");
@@ -178,6 +178,7 @@ useEffect(() => {
         const _isImg = ["png", "jpg", "jpeg", "webp", "bmp", "tiff", "tif", "gif", "heic", "zip", "tar", "tgz", "gz"].includes(_ext);
         currentGoal =
           activeWorkspace === "REPAIR_SHOP" ? "clean"
+          : activeWorkspace === "DNA" ? "dna"
           : activeWorkspace === "TEXT_INTELLIGENCE" && _isDoc ? "text_docs"
           : activeWorkspace === "VISION_LAB" && _isImg ? "images"
           : "inspect";
@@ -256,6 +257,13 @@ useEffect(() => {
             title="Repair Shop"
           >
             <Hammer size={20} />
+          </button>
+          <button
+            onClick={() => setActiveWorkspace("DNA")}
+            className={`transition-colors ${activeWorkspace === "DNA" ? "text-[#c8f06e]" : "text-white/40 hover:text-white"}`}
+            title="Cognitive DNA"
+          >
+            <span style={{ fontSize: 18 }}>{"\u{1F9EC}"}</span>
           </button>
         </nav>
 

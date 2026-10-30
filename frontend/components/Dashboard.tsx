@@ -95,7 +95,7 @@ export interface DashboardProps {
   goal: string;
   filename: string;
   onNewAnalysis?: () => void;
-  workspace?: "DIAGNOSTICS" | "VISION_LAB" | "TEXT_INTELLIGENCE" | "REPAIR_SHOP";
+    workspace?: "DIAGNOSTICS" | "VISION_LAB" | "TEXT_INTELLIGENCE" | "REPAIR_SHOP" | "DNA";
   apiUrl?: string;
 }
 
@@ -835,6 +835,49 @@ function TextIntelligenceView({ data, tab }: { data?: any; tab: string }) {
   );
 }
 
+function DnaView({ data }: { data?: any }) {  // dna-ui
+  if (!data || typeof data !== "object") {
+    return <div style={{ padding: 24, color: "#475569", fontSize: 12 }}>No DNA in this result.</div>;
+  }
+  const fmt = (v: any): string => {
+    if (v === null || v === undefined) return "-";
+    if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toFixed(4);
+    if (typeof v === "boolean") return v ? "yes" : "no";
+    if (typeof v === "object") {
+      const s = JSON.stringify(v);
+      if (s.length <= 140) return s;
+      return Array.isArray(v) ? `${v.length} values` : `${Object.keys(v).length} fields`;
+    }
+    return String(v);
+  };
+  const label = (k: string) => k.replace(/_/g, " ").toUpperCase();
+  const isGroup = (v: any) => v !== null && typeof v === "object" && !Array.isArray(v);
+  const top = Object.entries(data).filter(([, v]) => !isGroup(v));
+  const groups = Object.entries(data).filter(([, v]) => isGroup(v));
+  const Row = ({ k, v }: { k: string; v: any }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+      <span style={{ fontSize: 10, letterSpacing: 1, color: "#64748b" }}>{label(k)}</span>
+      <span style={{ fontSize: 12, color: "#e2e8f0", fontFamily: "monospace", textAlign: "right", wordBreak: "break-all" }}>{fmt(v)}</span>
+    </div>
+  );
+  const box: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: 16, marginBottom: 16 };
+  const head: React.CSSProperties = { fontSize: 11, letterSpacing: 2, color: "#c8f06e", marginBottom: 8 };
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={box}>
+        <div style={head}>IDENTITY</div>
+        {top.map(([k, v]) => <Row key={k} k={k} v={v} />)}
+      </div>
+      {groups.map(([name, g]) => (
+        <div key={name} style={box}>
+          <div style={head}>{label(name)}</div>
+          {Object.entries(g as Record<string, any>).map(([k, v]) => <Row key={k} k={k} v={v} />)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function OutliersView({ data }: { data?: any }) {
   const mono = "JetBrains Mono, monospace";
   const card = { background: "rgba(8,14,27,0.8)", border: "1px solid rgba(51,65,85,0.5)", borderRadius: 10, padding: 16 } as const;
@@ -1306,6 +1349,7 @@ export default function Dashboard({
     else if (workspace === "REPAIR_SHOP") setActiveTab("checklist");
     else if (workspace === "VISION_LAB") setActiveTab("gallery");
     else if (workspace === "TEXT_INTELLIGENCE") setActiveTab("analysis");
+    else if (workspace === "DNA") setActiveTab("dna");
   }, [workspace, jobId]);
 
   const wsOptions: any = {
@@ -1437,6 +1481,7 @@ export default function Dashboard({
       { id: "outliers",      label: "OUTLIERS" },
       { id: "distributions", label: "DISTRIBUTIONS" },
     ],
+    DNA: [{ id: "dna", label: "DNA" }],
     REPAIR_SHOP: [
       { id: "checklist", label: "FIX CHECKLIST" },
       { id: "issues",    label: `ISSUES${resultData?.issues ? ` (${resultData.issues.length})` : ""}` },
@@ -1744,6 +1789,8 @@ export default function Dashboard({
                      <span style={{ fontSize: 10, color: "#475569" }}>VISION GALLERY ACTIVE. {resultData.overview?.file_type?.includes("csv") ? "(Not available for tabular data)" : "Waiting for image stream..."}</span>
                    </div>
                 )}
+
+                {activeTab === "dna" && <DnaView data={(resultData as any).dna} />}
 
                 {/* --- TEXT INTEL VIEWS --- */}
                 {(activeTab === "analysis" || activeTab === "entities" || activeTab === "sentiment") && (
