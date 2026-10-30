@@ -416,8 +416,13 @@ class TextAnalysisRequest(BaseJobRequest):
 
 
 # Union type for routing
+class DnaRequest(BaseJobRequest):
+    goal: Literal[JobGoal.DNA] = JobGoal.DNA
+
+
 AnyJobRequest = Union[
     InspectRequest,
+    DnaRequest,
     CleanRequest,
     AnalyzeRequest,
     PrepareMLRequest,
