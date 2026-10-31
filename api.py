@@ -1536,7 +1536,10 @@ def _dispatch_step(
         if df is None:
             return {}
         from src.data.cognitive_dna import compute_dna  # noqa: PLC0415
-        return {"dna": compute_dna(df).to_dict()}
+        _t = (req or {}).get("target_column")  # dna-target
+        if not isinstance(_t, str) or _t not in df.columns:
+            _t = None
+        return {"dna": compute_dna(df, _t).to_dict(), "dna_target": _t}
 
     # All other steps delegate to the agent
     if "step_log" in accumulated:

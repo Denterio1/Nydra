@@ -418,6 +418,7 @@ class TextAnalysisRequest(BaseJobRequest):
 # Union type for routing
 class DnaRequest(BaseJobRequest):
     goal: Literal[JobGoal.DNA] = JobGoal.DNA
+    target_column: Optional[str] = Field(None, max_length=200, description="Optional target column for the DNA ML section")  # dna-target
 
 
 AnyJobRequest = Union[
