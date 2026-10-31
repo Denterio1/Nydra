@@ -37,6 +37,7 @@ export default function NydraApp() {
   const [activeSettingsTab, setActiveSettingsTab] = useState("api");
   const [customApiUrl, setCustomApiUrl] = useState(API_URL);
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("DIAGNOSTICS");
+  const [dnaTarget, setDnaTarget] = useState("");  // dna-target-ui
   const [registry, setRegistry] = useState<any>(null);
   const [settings, setSettings] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -186,6 +187,7 @@ useEffect(() => {
         jobRequest = {
           file_id: result.file.file_id,
           goal: currentGoal,
+          ...(currentGoal === "dna" && dnaTarget.trim() ? { target_column: dnaTarget.trim() } : {}),  // dna-target-ui
         };
       } else {
         currentGoal = "audit";
@@ -520,7 +522,20 @@ useEffect(() => {
                 </div>
                 
                 <div className="w-full max-w-3xl">
-                  <Uploader 
+                  {activeWorkspace === "DNA" && (
+                    <div className="mb-4 flex items-center gap-3 font-mono text-xs text-white/60">
+                      <label htmlFor="dna-target">TARGET COLUMN (optional)</label>
+                      <input
+                        id="dna-target"
+                        value={dnaTarget}
+                        onChange={(e) => setDnaTarget(e.target.value)}
+                        placeholder="e.g. churned"
+                        maxLength={200}
+                        className="bg-transparent border border-white/20 px-3 py-1 text-white outline-none focus:border-[#c8f06e]"
+                      />
+                    </div>
+                  )}
+                  <Uploader
                     token={token || ""} 
                     onUploadSuccess={handleUploadSuccess} 
                     apiUrl={customApiUrl}
