@@ -1470,7 +1470,7 @@ async def _run_agent(
                 # Run heavy computation in thread pool
                 step_result = await loop.run_in_executor(
                     None,
-                    lambda: _dispatch_step(doctor, step_name, goal, file_path, req, result),
+                    lambda: _dispatch_step(doctor, step_name, goal, file_path, req, result, job_id),
                 )
                 if step_result:
                     result.update(step_result)
@@ -1505,9 +1505,14 @@ def _dispatch_step(
     file_path: Path,
     req: Dict[str, Any],
     accumulated: Dict[str, Any],
+    job_id: str = "",
 ) -> Dict[str, Any]:
     """Synchronous dispatcher — runs inside thread pool executor."""
     import pandas as pd
+
+    # big-table: later steps read the bounded sample written by the Loading step
+    if accumulated.get("_df_path"):
+        file_path = Path(str(accumulated["_df_path"]))
 
     def _load_dataframe(path: Path) -> Optional[pd.DataFrame]:
         ext = path.suffix.lower().lstrip(".")
@@ -1524,6 +1529,14 @@ def _dispatch_step(
         return None
 
     if step_name == "Loading":
+        from src import scan_engine as _se  # big-table
+        if _se.needs_scan(file_path):  # big-table
+            _info = _se.scan_table(file_path, Path(UPLOAD_DIR) / "_scan" / (job_id or "nojob"))
+            if _info is not None:
+                _scan = {k: v for k, v in _info.items() if k != "sample_path"}
+                return {"_df_path": _info["sample_path"], "_orig_path": str(file_path),
+                        "rows": _info["analyzed_rows"], "columns": len(_info["columns"]),
+                        "scan": _scan}
         df = _load_dataframe(file_path)
         if df is None:
             return {"raw_path": str(file_path)}
@@ -1624,7 +1637,7 @@ def _enrich_result_for_ui(result: Dict[str, Any]) -> Dict[str, Any]:
                     if isinstance(cs.get(k), (int, float)):
                         item[k] = cs[k]
                 col_stats.append(item)
-            p = str(result.get("_df_path") or "")
+            p = str(result.get("_orig_path") or result.get("_df_path") or "")  # big-table
             try:
                 size_mb = round(Path(p).stat().st_size / 1_048_576, 3)
             except OSError:

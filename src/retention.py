@@ -82,6 +82,13 @@ def sweep_files(report_dir, upload_dir, now: Optional[float] = None,
             age = _age_s(p, now)
             if age is not None and age > work_s:
                 _remove(p, counts)
+    # big-table: samples back later views of the job, so they follow the report clock
+    scan_base = ud / "_scan"
+    if scan_base.is_dir():
+        for p in list(scan_base.iterdir()):
+            age = _age_s(p, now)
+            if age is not None and age > keep_s:
+                _remove(p, counts)
     return counts
 
 

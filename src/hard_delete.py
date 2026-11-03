@@ -34,7 +34,8 @@ def remove_job_artifacts(job_id: str, report_dir, upload_dir) -> int:
         return 0
     report_dir, upload_dir = Path(report_dir), Path(upload_dir)
     targets = list(report_dir.glob(f"{job_id}_*"))
-    targets += [upload_dir / "_clean" / job_id, upload_dir / "_report" / job_id]
+    targets += [upload_dir / "_clean" / job_id, upload_dir / "_report" / job_id,
+                upload_dir / "_scan" / job_id]  # big-table
     removed = 0
     for t in targets:
         try:
