@@ -1591,7 +1591,12 @@ def _enrich_result_for_ui(result: Dict[str, Any]) -> Dict[str, Any]:
         dup = int(dup_raw) if isinstance(dup_raw, (int, float)) else len(dup_raw)
         total_missing = int(sum(v or 0 for v in missing_map.values()))
         missing_pct = round(total_missing / max(rows * cols, 1) * 100, 2)
-        dup_pct = round(dup / max(rows, 1) * 100, 2)
+        dup_pct = round(dup / max(rows, 1) * 100, 2)
+        _sc = result.get("scan")  # scan-dup2
+        if (isinstance(_sc, dict) and isinstance(_sc.get("duplicate_rows"), int)
+                and isinstance(_sc.get("total_rows"), int) and _sc["total_rows"] > 0):
+            dup = _sc["duplicate_rows"]
+            dup_pct = round(dup / _sc["total_rows"] * 100, 2)
         outl = result.get("detect_outliers") or {}
         n_out = int(outl.get("n_outliers") or 0)
         out_rate = float(outl.get("outlier_rate") or 0.0)
