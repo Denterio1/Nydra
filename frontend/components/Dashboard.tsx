@@ -1693,6 +1693,18 @@ export default function Dashboard({
           {resultData && !isLoadingResult && (
             <>
               {/* Overview stats (always visible in results) */}
+              {/* scan-strip */}
+              {(resultData as any).scan && typeof (resultData as any).scan.total_rows === "number" && (
+                <div style={{ margin: "0 0 12px", padding: "10px 14px", border: "1px solid #1e293b", borderRadius: 6, background: "#0b1220", color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
+                  <span style={{ color: "#00d4aa", fontWeight: 700 }}>
+                    All {Number((resultData as any).scan.total_rows).toLocaleString()} rows scanned.
+                  </span>
+                  {typeof (resultData as any).overview?.rows === "number" && (resultData as any).overview.rows < (resultData as any).scan.total_rows && (
+                    <span> Deep analysis ran on a sample of {Number((resultData as any).overview.rows).toLocaleString()} rows.</span>
+                  )}
+                  <span> Distinct counts and percentiles are approximate.</span>
+                </div>
+              )}
               {resultData.overview && <OverviewStats overview={resultData.overview} />}
 
               {/* Quality gauge (always visible in results) */}
