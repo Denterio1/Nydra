@@ -111,7 +111,11 @@ def scan_table(path: Path, out_dir: Path, *, max_rows: Optional[int] = None,
     last = err[-1] if err else "unknown error"
     if "Out of Memory" in (proc.stderr or ""):
         raise ScanError("Scan ran out of memory. The file is too large or too wide for this server.")
-    raise ScanError("Scan failed: " + last[:200])
+    _full = proc.stderr or ""  # lenient-csv
+    if any(m in _full for m in ("state machine", "sniffing", "RFC 4180", "dialect")):
+        raise ScanError("The file could not be parsed as a table (inconsistent line endings, quoting or delimiters). Re-save it as a standard CSV and try again.")
+    _named = [l for l in err if "Error:" in l]
+    raise ScanError("Scan failed: " + (_named[-1] if _named else last)[:200])
 
 
 # --------------------------------------------------------------------------
@@ -121,12 +125,13 @@ def _q(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _reader(ext: str, p: str, sample_size: int) -> str:
+def _reader(ext: str, p: str, sample_size: int, lenient: bool = False) -> str:
     p = p.replace("\\", "/").replace("'", "''")
     if ext == "parquet":
         return f"read_parquet('{p}')"
     delim = ", delim='\\t'" if ext == "tsv" else ""
-    return f"read_csv_auto('{p}', sample_size={sample_size}{delim})"
+    strict = ", strict_mode=false" if lenient else ""
+    return f"read_csv_auto('{p}', sample_size={sample_size}{delim}{strict})"
 
 
 def _child(args: Dict[str, Any]) -> None:
@@ -136,14 +141,14 @@ def _child(args: Dict[str, Any]) -> None:
     tmp_dir = (out_dir / "_duck_tmp").as_posix()
     last_exc: Optional[Exception] = None
     # CSV type detection looks at a sample; retry once with a full-file pass on a type error
-    for sample_size in (100000, -1):
+    for _idx, (sample_size, _lenient) in enumerate(((100000, False), (-1, False), (-1, True))):  # lenient-csv
         con = duckdb.connect()
         try:
             con.execute(f"SET memory_limit='{int(args['mem_mb'])}MB'")
             con.execute(f"SET threads={int(args['threads'])}")
             con.execute("SET preserve_insertion_order=false")
             con.execute(f"SET temp_directory='{tmp_dir}'")
-            con.execute(f"CREATE VIEW t AS SELECT * FROM {_reader(args['ext'], args['path'], sample_size)}")
+            con.execute(f"CREATE VIEW t AS SELECT * FROM {_reader(args['ext'], args['path'], sample_size, _lenient)}")
 
             total = con.execute("SELECT count(*) FROM t").fetchone()[0]
 
@@ -194,7 +199,9 @@ def _child(args: Dict[str, Any]) -> None:
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             msg = str(exc)
-            if sample_size != -1 and args["ext"] != "parquet" and ("Conversion Error" in msg or "type" in msg.lower()):
+            _parser_err = any(m in msg for m in ("state machine", "sniffing", "RFC 4180", "dialect"))
+            _type_err = "Conversion Error" in msg or "type" in msg.lower()
+            if args["ext"] != "parquet" and ((_idx == 0 and (_type_err or _parser_err)) or (_idx == 1 and _parser_err)):
                 continue
             raise
         finally:
