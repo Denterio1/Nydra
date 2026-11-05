@@ -1482,6 +1482,10 @@ async def _run_agent(
             await tracker.finish_step(db)
 
         except Exception as exc:
+            if type(exc).__name__ == "ScanError":  # scan-fail
+                log.warning("Scan failed: %s", exc)
+                await tracker.finish_step(db, warnings=[str(exc)])
+                raise
             log.warning("Step '%s' failed: %s", step_name, exc)
             await ws_manager.send_warning(
                 job_id, "STEP_ERROR", f"Step '{step_name}' encountered an issue: {exc}"
@@ -1649,6 +1653,11 @@ def _enrich_result_for_ui(result: Dict[str, Any]) -> Dict[str, Any]:
                 "total_duplicates": dup, "duplicate_pct": dup_pct,
                 "column_stats": col_stats,
             }
+            scan = result.get("scan")  # scan-dup
+            if (isinstance(scan, dict) and isinstance(scan.get("duplicate_rows"), int)
+                    and isinstance(scan.get("total_rows"), int) and scan["total_rows"] > 0):
+                result["overview"]["total_duplicates"] = scan["duplicate_rows"]
+                result["overview"]["duplicate_pct"] = round(scan["duplicate_rows"] / scan["total_rows"] * 100, 2)
 
         if "issues" not in result:
             issues = []
