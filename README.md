@@ -18,6 +18,8 @@ Formerly known as **dataDoctor**.
 - [Project Structure](#project-structure)
 - [Testing](#testing)
 - [Example Datasets](#example-datasets)
+- [Big Tables](#big-tables)
+- [Current Limits](#current-limits)
 - [Roadmap](#roadmap)
 - [Security Notes](#security-notes)
 - [Contributing](#contributing)
@@ -118,7 +120,7 @@ Edit `.env.docker` and replace every `CHANGE_ME` with its own random value (`ope
 docker compose up -d --build
 ```
 
-When `docker compose ps` shows the backend as `healthy` (about two minutes, while the text models warm up), open **http://localhost:8080**.
+When `docker compose ps` shows the backend as `healthy` (about two minutes, while the text models warm up), open **http://localhost:8080**. The first scan after a restart can take a few minutes while the text models warm up.
 
 Data (database, uploads, reports) lives in the `nydra-data` Docker volume and survives restarts. Do not run `docker compose down -v` unless you want to delete it.
 
@@ -331,6 +333,17 @@ Larger third-party datasets (for example [Dogs vs. Cats on Kaggle](https://www.k
 
 ---
 
+## Big Tables
+
+CSV, TSV and Parquet files of 2 MB or more are handled in two layers:
+
+- **Full scan.** Every row is read by DuckDB in a separate process with a memory limit and a timeout. Exact: row count, duplicate rows (hash-based), nulls, min and max. Approximate (marked as such in the UI): distinct counts, percentiles, mean and standard deviation.
+- **Deep analysis on a sample.** Imputation, outliers, DNA and ML readiness run on a random sample of at most 25,000 rows. Smaller files are analysed in full.
+
+If a scan fails (timeout, out of memory, unparseable file), the job fails with a readable message. It never falls back to loading the whole file.
+
+Settings in `.env.docker`: `MAX_TABLE_ROWS` (default 25000, `0` = no cap), `SCAN_MIN_MB` (2), `SCAN_MEM_MB` (512), `SCAN_TIMEOUT_S` (600). Excel and plain JSON arrays still load fully into memory. The sample is stored with the job and removed after 7 days, or immediately by `DELETE /api/v1/jobs/{id}/data`. Large-scale testing so far was done on CSV only.
+
 ## Current Limits
 
 Nydra is an early release. What works and what doesn't:
@@ -338,7 +351,7 @@ Nydra is an early release. What works and what doesn't:
 - **Formats:** CSV/Excel/JSON/Parquet tables, PDF, DOCX, TXT and Markdown documents, and images (single files or zip/tar archives) are supported and tested. HTML and legacy `.doc` are not supported.
 - **Text report:** the full quality report is English-only.
 - **Images:** analysis runs on a stratified sample of 150 images per archive. Tested up to about 360 images; archives with thousands of full-size photos have not been timed. Cleaning is capped at 3,000 images.
-- **Tables:** the web UI runs the inspection pipeline (cleaning, outliers, ML readiness). Other goals such as AutoML exist in the code but are not exposed in the UI yet.
+- **Tables:** the web UI runs the inspection pipeline (cleaning, outliers, ML readiness). Other goals such as AutoML exist in the code but are not exposed in the UI yet. Big tables are scanned in full and analysed on a sample (see Big Tables).
 - **Docker setup:** built for `http://localhost:8080`. The API address is baked into the frontend image at build time, so running on a server needs a different `NEXT_PUBLIC_API_URL` in `docker-compose.yml` and a rebuild. There is no HTTPS yet (Caddy serves plain HTTP).
 - **Demo limits:** 200 MB per direct upload, 0.5 GB chunked, 2 GB stored per user, 2 active jobs per user. Defaults can be changed in `.env.docker`.
 - **Scale:** SQLite, one backend process, job state held in memory. A restart marks running jobs as failed. Not load tested.
