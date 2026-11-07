@@ -11,7 +11,9 @@ WORKDIR /app
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements-docker.txt .
-RUN pip install --default-timeout=300 --retries 10 -r requirements-docker.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install --default-timeout=300 --retries 10 pyarrow==23.0.1
+RUN --mount=type=cache,target=/root/.cache/pip pip install --default-timeout=300 --retries 10 duckdb==1.5.3
+RUN --mount=type=cache,target=/root/.cache/pip pip install --default-timeout=300 --retries 10 -r requirements-docker.txt
 
 COPY . .
 
