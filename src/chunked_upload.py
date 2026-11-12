@@ -93,6 +93,10 @@ class ChunkStore:
                 raise ChunkUploadError("Invalid size.", 400)
         if total_size > L.max_total_bytes:
             raise ChunkUploadError("File too large. Maximum is %d MB." % (L.max_total_bytes // 1024 ** 2), 413)
+        from src.upload_limits import ext_of, limit_bytes_for, too_large_message  # per-type-limit
+        _ext = ext_of(filename)  # per-type-limit
+        if total_size > limit_bytes_for(_ext):  # per-type-limit
+            raise ChunkUploadError(too_large_message(_ext), 413)  # per-type-limit
         if not (L.min_chunk_bytes <= chunk_size <= L.max_chunk_bytes):
             raise ChunkUploadError("Invalid chunk size.", 400)
         n_chunks = -(-total_size // chunk_size)

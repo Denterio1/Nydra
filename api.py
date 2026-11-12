@@ -1808,13 +1808,14 @@ async def save_upload(file: UploadFile, user_id: str) -> UploadedFileInfo:
     sha      = hashlib.sha256()
     size     = 0
     chunk_sz = 1024 * 1024  # 1MB chunks
+    max_bytes = min(MAX_FILE_BYTES, limit_bytes_for(ext))  # per-type-limit
 
     try:
         too_large = False
         async with aiofiles.open(tmp_path, "wb") as f:
             while chunk := await file.read(chunk_sz):
                 size += len(chunk)
-                if size > MAX_FILE_BYTES:
+                if size > max_bytes:  # per-type-limit
                     too_large = True
                     break
                 sha.update(chunk)
@@ -1824,7 +1825,7 @@ async def save_upload(file: UploadFile, user_id: str) -> UploadedFileInfo:
                 tmp_path.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=413,
-                    detail=f"File too large. Maximum allowed size is {MAX_FILE_MB}MB",
+                    detail=f"File too large. Maximum allowed size is {max_bytes // (1024 * 1024)}MB",  # per-type-limit
 
                 )
     except HTTPException:
@@ -2613,6 +2614,7 @@ async def upload_multi(
 # -- Chunked (resumable) uploads ---------------------------------------------
 from pydantic import BaseModel as _PydBase, Field as _PydField
 from src.chunked_upload import ChunkStore, ChunkLimits, ChunkUploadError
+from src.upload_limits import limit_bytes_for, max_any_bytes  # per-type-limit
 
 MAX_CHUNKED_GB = float(os.getenv("MAX_CHUNKED_GB", 10))
 chunk_limiter = RateLimiter(max_calls=600, window_s=60)
@@ -2624,7 +2626,7 @@ def _chunk_store() -> ChunkStore:
     if _CHUNK_STORE is None:
         _CHUNK_STORE = ChunkStore(
             UPLOAD_DIR / "_chunks",
-            ChunkLimits(max_total_bytes=int(MAX_CHUNKED_GB * 1024 ** 3)),
+            ChunkLimits(max_total_bytes=max_any_bytes()),  # per-type-limit
             allowed_extensions=ALLOWED_EXTENSIONS,
         )
     return _CHUNK_STORE
