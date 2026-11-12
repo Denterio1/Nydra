@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getApiBase } from "@/lib/apiBase"; // api-base
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES  (mirrors api_schemas.py WSMessage)
@@ -164,7 +165,7 @@ function buildWsUrl(jobId: string, apiUrl?: string): string {
   const base = (
     process.env.NEXT_PUBLIC_WS_URL ??
     apiUrl?.replace(/^http/, "ws") ??
-    process.env.NEXT_PUBLIC_API_URL?.replace(/^http/, "ws") ??
+    getApiBase().replace(/^http/, "ws") ??
     "ws://localhost:8000"
   );
   return `${base}/api/v1/ws/${jobId}`;

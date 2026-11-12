@@ -6,6 +6,7 @@ import Dashboard from "@/components/Dashboard";
 import ChatBox from "@/components/ChatBox";
 import Auth from "@/components/Auth";
 import axios from "axios";
+import { getApiBase } from "@/lib/apiBase"; // api-base
 import { Layout, Database, Activity, MessageSquare, Settings, LogOut, ChevronRight, Eye, Type, Hammer } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -44,7 +45,8 @@ export default function NydraApp() {
 
   useEffect(() => {
     const savedApi = localStorage.getItem("nydra_api_url");
-    if (savedApi) setCustomApiUrl(savedApi);
+    const base = savedApi || getApiBase();
+    setCustomApiUrl(base);
     
     // Check if token exists in session
     const savedToken = sessionStorage.getItem("nydra_token");
@@ -52,7 +54,7 @@ export default function NydraApp() {
     if (savedToken) {
       setToken(savedToken);
       if (savedRefresh) setRefreshToken(savedRefresh);
-      fetchMetadata(savedToken);
+      fetchMetadata(savedToken, base);
     }
   }, []);
 
@@ -73,11 +75,11 @@ useEffect(() => {
   return () => clearTimeout(timer);
 }, [token, refreshToken, customApiUrl]);
 
-  const fetchMetadata = async (t: string) => {
+  const fetchMetadata = async (t: string, base: string = customApiUrl) => {
     try {
       const [regRes, setRes] = await Promise.all([
-        axios.get(`${customApiUrl}/api/v1/config/llm/providers`, { headers: { Authorization: `Bearer ${t}` } }),
-        axios.get(`${customApiUrl}/api/v1/me/settings`, { headers: { Authorization: `Bearer ${t}` } })
+        axios.get(`${base}/api/v1/config/llm/providers`, { headers: { Authorization: `Bearer ${t}` } }),
+        axios.get(`${base}/api/v1/me/settings`, { headers: { Authorization: `Bearer ${t}` } })
       ]);
       setRegistry(regRes.data);
       setSettings(setRes.data);
@@ -202,7 +204,7 @@ useEffect(() => {
       setGoal(currentGoal);
       setFilename(currentFilename);
 
-      const res = await axios.post(`${API_URL}/api/v1/jobs`, jobRequest, {
+      const res = await axios.post(`${customApiUrl}/api/v1/jobs`, jobRequest, {
         headers: { Authorization: `Bearer ${token}` }
       });
       

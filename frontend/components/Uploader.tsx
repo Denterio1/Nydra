@@ -24,6 +24,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { getApiBase } from "@/lib/apiBase"; // api-base
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -946,7 +947,7 @@ export default function Uploader({
     isDone: false,
   });
 
-  const API_BASE = apiUrl ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const API_BASE = apiUrl ?? getApiBase();
 
   const inputRef    = useRef<HTMLInputElement>(null);
   const dropRef     = useRef<HTMLDivElement>(null);

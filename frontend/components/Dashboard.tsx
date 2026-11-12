@@ -27,6 +27,7 @@ import {
   type WSWarningPayload,
   type ConnectionState,
 } from "../hooks/useNydraWS";
+import { getApiBase } from "@/lib/apiBase"; // api-base
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -103,7 +104,7 @@ export interface DashboardProps {
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 
 const SEVERITY_CONFIG = {
   critical: { color: "#f43f5e", bg: "rgba(244,63,94,0.08)", label: "CRITICAL", icon: "⬟" },
@@ -1334,7 +1335,7 @@ export default function Dashboard({
   const [isLoadingResult, setIsLoadingResult] = useState(false);
   const resultFetched = useRef(false);
 
-  const API_BASE = apiUrl ?? DEFAULT_API_BASE;
+  const API_BASE = apiUrl ?? getApiBase();
 
   // Reset local state when jobId changes
   useEffect(() => {

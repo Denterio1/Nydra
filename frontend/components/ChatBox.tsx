@@ -25,6 +25,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { getApiBase } from "@/lib/apiBase"; // api-base
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -64,7 +65,7 @@ export interface ChatBoxProps {
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
 
 const MAX_TOKENS    = 4000;
 const MAX_HISTORY   = 50;
@@ -473,7 +474,7 @@ export default function ChatBox({
   const [autoScroll,  setAutoScroll]  = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(true);
 
-  const API_BASE = apiUrl ?? DEFAULT_API_BASE;
+  const API_BASE = apiUrl ?? getApiBase();
   const WS_BASE  = API_BASE.replace(/^http/, "ws");
 
   const wsRef       = useRef<WebSocket | null>(null);
