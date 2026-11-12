@@ -1090,14 +1090,27 @@ def _build_step_plan(goal: JobGoal) -> List[Dict[str, str]]:
     return plans.get(goal, base)
 
 def _sanitize_for_json(obj):
-    """Recursively strip pandas DataFrames (and other non-JSON-safe types) from a result dict."""
+    """Recursively make a result JSON-safe: DataFrames, dates, numpy scalars, tuples, sets."""  # json-safe
+    import datetime as _dt  # noqa : PLC0415
+    import numpy as np  # noqa : PLC0415
     import pandas as pd  # noqa : PLC0415
     if isinstance(obj, pd.DataFrame):
-        return {"_type": "DataFrame", "rows": len(obj), "columns": list(obj.columns)}
+        return {"_type": "DataFrame", "rows": len(obj), "columns": [str(c) for c in obj.columns]}
     if isinstance(obj, dict):
-        return {k: _sanitize_for_json(v) for k, v in obj.items()}
-    if isinstance(obj, list):
+        return {
+            (k if (k is None or isinstance(k, (str, int, float, bool))) else str(k)): _sanitize_for_json(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, (list, tuple, set, frozenset)):
         return [_sanitize_for_json(v) for v in obj]
+    if obj is pd.NaT:
+        return None
+    if isinstance(obj, (_dt.datetime, _dt.date)):
+        return obj.isoformat()
+    if isinstance(obj, np.ndarray):
+        return _sanitize_for_json(obj.tolist())
+    if isinstance(obj, np.generic):
+        return _sanitize_for_json(obj.item())
     return obj
 
 
