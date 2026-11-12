@@ -78,3 +78,6 @@ patch_*.py
 bench_*.py
 _patch_backups/
 probe_dataset.zip
+
+examples_backup/
+.streamlit/
