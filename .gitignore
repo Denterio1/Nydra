@@ -67,3 +67,14 @@ huge_test.zip
 .env.docker
 
 !.env.docker.example
+
+# logs and scratch
+*.log
+nydra_queries.json
+reports/~$*
+build-*.log
+suite.log
+patch_*.py
+bench_*.py
+_patch_backups/
+probe_dataset.zip
