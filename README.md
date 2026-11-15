@@ -4,6 +4,14 @@
 
 Formerly known as **dataDoctor**.
 
+## Screenshots
+
+| Diagnostics | Text Intelligence | Vision Lab |
+|---|---|---|
+| ![Diagnostics](docs/assets/diagnostics.png) | ![Text](docs/assets/text.png) | ![Vision](docs/assets/vision.png) |
+| | ![Text 2](docs/assets/text2.png) | ![Vision 2](docs/assets/vision2.png) |
+| | ![Text chat](docs/assets/text-chat.png) | |
+
 ---
 
 ## Table of Contents
