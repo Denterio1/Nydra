@@ -2759,6 +2759,40 @@ async def chunk_upload_abort(
         raise HTTPException(status_code=e.status, detail=e.message)
 
 
+# files-list
+@app.get("/api/v1/files", tags=["Files"])
+async def list_files(
+    current_user: DBUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the current user's own files and storage usage (no server paths)."""
+    from src.quotas import user_storage_bytes, MAX_USER_STORAGE_MB
+    result = await db.execute(
+        select(DBUploadedFile)
+        .where(
+            DBUploadedFile.user_id == current_user.id,
+            DBUploadedFile.is_deleted.isnot(True),
+        )
+        .order_by(DBUploadedFile.uploaded_at.desc())
+    )
+    rows = result.scalars().all()
+    used = await user_storage_bytes(db, DBUploadedFile, current_user.id)
+    return {
+        "files": [
+            {
+                "file_id": f.id,
+                "filename": f.filename,
+                "file_type": f.file_type,
+                "size_bytes": f.size_bytes,
+                "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
+            }
+            for f in rows
+        ],
+        "used_bytes": int(used or 0),
+        "quota_mb": MAX_USER_STORAGE_MB,
+    }
+
+
 @app.delete("/api/v1/files/{file_id}", status_code=204, tags=["Files"])
 async def delete_file(
     file_id: str,
