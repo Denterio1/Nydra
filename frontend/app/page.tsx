@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import Uploader, { UploadResult, AuditUploadResult } from "@/components/Uploader";
+import ApiKeysTab from "@/components/ApiKeysTab";
+import DataPrivacyTab from "@/components/DataPrivacyTab";
 import Dashboard from "@/components/Dashboard";
 import ChatBox from "@/components/ChatBox";
 import Auth from "@/components/Auth";
@@ -293,14 +295,14 @@ useEffect(() => {
           <div className="w-full max-w-4xl h-[500px] bg-[#0f172a] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex">
             {/* Modal Sidebar */}
             <div className="w-64 border-r border-white/5 bg-black/20 p-8 flex flex-col gap-2">
-              <h2 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] mb-8">System Config</h2>
+              <h2 className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em] mb-8">Settings</h2>
               <button 
                 onClick={() => setActiveSettingsTab("api")}
                 className={`px-4 py-3 rounded-xl text-left text-xs font-bold tracking-widest transition-all ${
                   activeSettingsTab === "api" ? "bg-[#c8f06e]/10 text-[#c8f06e] border border-[#c8f06e]/20" : "text-white/30 hover:text-white"
                 }`}
               >
-                API BRANCH
+                API &amp; MODELS
               </button>
               <button 
                 onClick={() => setActiveSettingsTab("general")}
@@ -308,7 +310,7 @@ useEffect(() => {
                   activeSettingsTab === "general" ? "bg-[#c8f06e]/10 text-[#c8f06e] border border-[#c8f06e]/20" : "text-white/30 hover:text-white"
                 }`}
               >
-                GENERAL
+                API KEYS
               </button>
               <button 
                 onClick={() => setActiveSettingsTab("data")}
@@ -316,7 +318,7 @@ useEffect(() => {
                   activeSettingsTab === "data" ? "bg-[#c8f06e]/10 text-[#c8f06e] border border-[#c8f06e]/20" : "text-white/30 hover:text-white"
                 }`}
               >
-                DATA ENGINE
+                DATA &amp; PRIVACY
               </button>
             </div>
 
@@ -440,12 +442,8 @@ useEffect(() => {
                   </div>
                 )}
 
-                {activeSettingsTab !== "api" && (
-                  <div className="flex flex-col items-center justify-center h-full text-center opacity-20 grayscale">
-                    <Database size={48} className="mb-4" />
-                    <p className="font-mono text-[10px] uppercase tracking-widest">Branch Locked in Prototype</p>
-                  </div>
-                )}
+                {activeSettingsTab === "general" && <ApiKeysTab token={token} apiBase={customApiUrl} />}
+                {activeSettingsTab === "data" && <DataPrivacyTab token={token} apiBase={customApiUrl} />}
               </div>
 
               <div className="pt-8 border-t border-white/5 flex justify-end gap-4">
@@ -469,9 +467,9 @@ useEffect(() => {
                     
                     handleSaveSettings(updates);
                   }}
-                  className="px-10 py-3 rounded-xl bg-[#c8f06e] text-[#0f172a] text-[10px] font-bold tracking-[0.2em] hover:bg-[#b8e05e] transition-all shadow-lg shadow-[#c8f06e]/10 uppercase"
+                  className={`${activeSettingsTab === "api" ? "" : "hidden "}px-10 py-3 rounded-xl bg-[#c8f06e] text-[#0f172a] text-[10px] font-bold tracking-[0.2em] hover:bg-[#b8e05e] transition-all shadow-lg shadow-[#c8f06e]/10 uppercase`}
                 >
-                  {isSaving ? "Saving..." : "Save Branch"}
+                  {isSaving ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>
